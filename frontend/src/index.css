@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: light; }
+html, body { background: #f6f7f9; color: #0f172a; }
+body { font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* formulare publice afișate în iframe pe ieftinit.ro */
+html.embed, html.embed body { background: transparent; }
+
+@media print {
+  .no-print { display: none !important; }
+  aside, header.app-header { display: none !important; }
+  main { padding: 0 !important; margin: 0 !important; }
+  body { background: #fff; }
+  .print-break { break-inside: avoid; }
+  .shadow-sm, .shadow { box-shadow: none !important; }
+}
