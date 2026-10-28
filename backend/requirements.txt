@@ -8,3 +8,5 @@ httpx==0.28.1
 bcrypt==4.2.1
 PyJWT==2.10.1
 resend==2.5.1
+openpyxl==3.1.5
+tzdata==2024.2

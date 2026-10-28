@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink } from "lucide-react";
+import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtDateTime, fmtAgo, money } from "../lib/format";
@@ -23,6 +23,7 @@ const TABS = [
   { id: "stoc", label: "Stocuri" },
   { id: "inventar", label: "Inventar" },
   { id: "valoare", label: "Valoare stoc" },
+  { id: "istoric", label: "Istoric stocuri" },
   { id: "intrari", label: "Intrări marfă" },
   { id: "miscari", label: "Mișcări" },
   { id: "setari", label: "Setări", admin: true },
@@ -79,6 +80,7 @@ export default function Stock() {
       {tab === "stoc" && <StockList summary={summary} onChanged={loadSummary} goInventory={() => nav("/stocuri/inventar")} />}
       {tab === "inventar" && <Inventory summary={summary} onDone={loadSummary} />}
       {tab === "valoare" && <StockValue />}
+      {tab === "istoric" && <StockHistory />}
       {tab === "intrari" && <Receipts />}
       {tab === "miscari" && <Movements />}
       {tab === "setari" && <StockSettings summary={summary} onSaved={setSummary} />}
@@ -805,6 +807,90 @@ function StockValue() {
                     <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular">{r.value === null ? "—" : money(r.value)}</td>
                   </tr>
                 ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+
+function StockHistory() {
+  const toast = useToast();
+  const { isAdmin } = useAuth();
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api("/stock/snapshots").then(setD).catch((e) => toast.error(e.message));
+  useEffect(() => { load(); }, []); // eslint-disable-line
+  const manual = async () => {
+    if (!window.confirm("Generezi acum o situație a stocului? Va apărea în listă marcată „manuală”. Situația automată de final de lună se face oricum.")) return;
+    setBusy(true);
+    try { await api("/stock/snapshots", { method: "POST" }); toast.success("Situație generată"); load(); }
+    catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  if (!d) return <PageLoader />;
+  const KIND = {
+    auto: ["Automată · final de lună", "bg-emerald-50 text-emerald-700 ring-emerald-200"],
+    late: ["Automată · cu întârziere", "bg-amber-50 text-amber-700 ring-amber-200"],
+    manual: ["Manuală", "bg-slate-100 text-slate-600 ring-slate-200"],
+  };
+  return (
+    <div>
+      <Card className="mb-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0 text-sm text-slate-600">
+            <div className="text-base font-semibold text-slate-900">Situația lunară a stocului pentru contabil</div>
+            <div className="mt-1">În ultima zi a fiecărei luni, la ora 23:55, hub-ul salvează automat stocul de marfă: produs, cantitate, preț de achiziție fără TVA și valoare. Fiecare situație se descarcă ca fișier Excel, gata de trimis contabilului.</div>
+            <div className="mt-2 font-medium text-slate-800">
+              {d.started ? `Următoarea situație automată: ${fmtDateTime(d.next_run)}` : "Situațiile automate pornesc după primul inventar."}
+            </div>
+          </div>
+          {isAdmin && <Button variant="outline" loading={busy} onClick={manual}><FileSpreadsheet className="h-4 w-4" /> Generează acum</Button>}
+        </div>
+      </Card>
+      {d.items.length === 0 ? (
+        <Card><Empty icon={FileSpreadsheet} title="Nicio situație încă">Prima situație se generează automat în ultima zi a lunii.</Empty></Card>
+      ) : (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-3">Luna</th>
+                  <th className="px-4 py-3">Generată</th>
+                  <th className="px-4 py-3 text-right">Produse</th>
+                  <th className="px-4 py-3 text-right">Bucăți</th>
+                  <th className="px-4 py-3 text-right">Valoare fără TVA</th>
+                  <th className="px-4 py-3 text-right">Fișier</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {d.items.map((r) => {
+                  const k = KIND[r.kind] || KIND.manual;
+                  return (
+                    <tr key={r.id}>
+                      <td className="px-4 py-3">
+                        <div className="font-semibold capitalize">{r.label}</div>
+                        <Pill className={cx("mt-1", k[1])}>{k[0]}</Pill>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">
+                        <div>{fmtDateTime(r.as_of)}</div>
+                        <div className="text-xs text-slate-400">{r.created_by}</div>
+                        {r.missing_cost > 0 && <div className="mt-1 text-xs font-medium text-red-600">{r.missing_cost} produse fără preț de achiziție</div>}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular">{r.products}</td>
+                      <td className="px-4 py-3 text-right tabular">{r.units}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right font-semibold tabular">{money(r.value)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <a href={`/api/stock/snapshots/${r.id}/xlsx`} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white hover:bg-brand/90">
+                          <Download className="h-3.5 w-3.5" /> Excel
+                        </a>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
