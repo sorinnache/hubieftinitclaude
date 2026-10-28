@@ -12,6 +12,7 @@ import ServiceDetail from "./pages/ServiceDetail";
 import Settings from "./pages/Settings";
 import Activity from "./pages/Activity";
 import Stock from "./pages/Stock";
+import InventoryRun from "./pages/InventoryRun";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -20,6 +21,13 @@ function Protected({ children }) {
   if (user === undefined) return <PageLoader />;
   if (!user) return <Navigate to="/login" replace />;
   return <Layout>{children}</Layout>;
+}
+
+function ProtectedBare({ children }) {
+  const { user } = useAuth();
+  if (user === undefined) return <PageLoader />;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
 }
 
 function App() {
@@ -35,6 +43,7 @@ function App() {
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
       <Route path="/service/:id" element={<Protected><ServiceDetail /></Protected>} />
+      <Route path="/stocuri/inventar" element={<ProtectedBare><InventoryRun /></ProtectedBare>} />
       <Route path="/stocuri" element={<Protected><Stock /></Protected>} />
       <Route path="/istoric" element={<Protected><Activity /></Protected>} />
       <Route path="/setari" element={<Protected><Settings /></Protected>} />

@@ -48,3 +48,5 @@ async def ensure_indexes():
     await db.stock_orders.create_index("reserving")
     await db.stock_movements.create_index([("variant_id", 1), ("created_at", -1)])
     await db.stock_movements.create_index("created_at")
+    await db.stock_inventory_sessions.create_index("id", unique=True)
+    await db.stock_inventory_sessions.create_index("status")

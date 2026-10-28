@@ -22,6 +22,8 @@ const OTHER = {
   "problem_type.created": "Tip problemă adăugat",
   "problem_type.updated": "Tip problemă modificat",
   "stock.inventory": "Inventar stoc salvat",
+  "stock.inventory_started": "Inventar pornit",
+  "stock.inventory_abandoned": "Inventar abandonat",
   "stock.receipt": "Intrare marfă",
   "stock.adjust": "Ajustare stoc",
   "stock.bundle": "Pachet modificat",

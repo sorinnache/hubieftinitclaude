@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -41,6 +41,7 @@ export default function Stock() {
   const tabs = TABS.filter((t) => isAdmin || !t.admin);
   const tab = tabs.find((t) => t.id === params.get("tab"))?.id || "stoc";
   const [summary, setSummary] = useState(null);
+  const nav = useNavigate();
   const loadSummary = () => api("/stock/summary").then(setSummary).catch(() => {});
   useEffect(() => { loadSummary(); }, [tab]);
 
@@ -69,7 +70,7 @@ export default function Stock() {
           </button>
         ))}
       </div>
-      {tab === "stoc" && <StockList summary={summary} onChanged={loadSummary} goInventory={() => setParams({ tab: "inventar" })} />}
+      {tab === "stoc" && <StockList summary={summary} onChanged={loadSummary} goInventory={() => nav("/stocuri/inventar")} />}
       {tab === "inventar" && <Inventory summary={summary} onDone={loadSummary} />}
       {tab === "intrari" && <Receipts />}
       {tab === "miscari" && <Movements />}
@@ -363,6 +364,7 @@ function Inventory({ summary, onDone }) {
   const [q, setQ] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState(false);
   const rows = useMemo(() => {
     if (!items) return null;
     const s = q.trim().toLowerCase();
@@ -382,6 +384,11 @@ function Inventory({ summary, onDone }) {
   };
   return (
     <div>
+      <GuidedInventoryCard />
+      <button onClick={() => setManual(!manual)} className="mb-3 text-sm font-medium text-brand hover:underline">
+        {manual ? "Ascunde corecția rapidă" : "Corecție rapidă pentru câteva produse (fără inventar complet)"}
+      </button>
+      {manual && <>
       <Card className="mb-4 p-4 text-sm text-slate-600">
         {summary?.started
           ? "Numără produsele din depozit și scrie cantitatea găsită. Se salvează doar rândurile completate; diferențele apar în registru ca „Inventar”."
@@ -436,7 +443,34 @@ function Inventory({ summary, onDone }) {
           </div>
         </Card>
       )}
+      </>}
     </div>
+  );
+}
+
+function GuidedInventoryCard() {
+  const nav = useNavigate();
+  const [sess, setSess] = useState(undefined);
+  const [hist, setHist] = useState([]);
+  useEffect(() => {
+    api("/stock/inventory/session").then((r) => setSess(r.session)).catch(() => setSess(null));
+    api("/stock/inventory/sessions").then(setHist).catch(() => {});
+  }, []);
+  const last = hist.find((h) => h.status === "done");
+  return (
+    <Card className="mb-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 text-sm text-slate-600">
+          <div className="text-base font-semibold text-slate-900">Inventar complet pe telefon</div>
+          <div className="mt-1">Ia telefonul în depozit. Fiecare produs apare pe tot ecranul, pe rând; scrii cantitatea găsită și apeși „Salvează” — apare următorul. Nu se poate sări peste niciun produs, iar inventarul se finalizează doar când toate sunt numărate.</div>
+          {sess && <div className="mt-2 font-medium text-brand">Inventar în desfășurare: {sess.done} din {sess.total} produse numărate (pornit de {sess.started_by} la {fmtDateTime(sess.started_at)})</div>}
+          {!sess && last && <div className="mt-2 text-xs text-slate-500">Ultimul inventar complet: {fmtDateTime(last.finished_at)} de {last.finished_by} · {last.summary?.products} produse, {last.summary?.changed} cu diferențe</div>}
+        </div>
+        <Button size="lg" disabled={sess === undefined} onClick={() => nav("/stocuri/inventar")}>
+          <ClipboardList className="h-5 w-5" /> {sess ? "Continuă inventarul" : "Fă inventarul"}
+        </Button>
+      </div>
+    </Card>
   );
 }
 

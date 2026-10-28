@@ -637,3 +637,145 @@ async def manual_sync(products: bool = True, _: dict = Depends(get_current_user)
         return await sync_all(products=products)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"Shopify: {e}")
+
+
+# ------------------------------------------------------------------ inventar ghidat (telefon)
+# O sesiune de inventar trece prin TOATE produsele urmărite, unul câte unul. Fiecare cantitate
+# salvată se aplică imediat (stocul devine exact cât s-a numărat), iar sesiunea se poate
+# finaliza doar după ce fiecare produs are o cantitate introdusă.
+
+def _inv_sort_key(v: dict):
+    return ((v.get("location") or "~").lower(), (v.get("product_title") or "").lower(), (v.get("variant_title") or "").lower())
+
+
+async def _inv_targets() -> list[dict]:
+    db = get_db()
+    vs = await db.stock_variants.find({"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True},
+                                       "bundle": {"$in": [None, []]}}, {"_id": 0}).to_list(20000)
+    return sorted(vs, key=_inv_sort_key)
+
+
+async def _open_session() -> Optional[dict]:
+    return await get_db().stock_inventory_sessions.find_one({"status": "open"}, {"_id": 0})
+
+
+async def _session_view(sess: dict) -> dict:
+    db = get_db()
+    targets = await _inv_targets()
+    ids = list(sess.get("order") or [])
+    known = set(ids)
+    added = [v["variant_id"] for v in targets if v["variant_id"] not in known]
+    if added:  # produse noi apărute în Shopify în timpul inventarului — intră la final
+        ids += added
+        await db.stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {"order": ids}})
+    active = {v["variant_id"]: v for v in targets}
+    counts = sess.get("counts") or {}
+    items = []
+    for vid in ids:
+        v = active.get(vid)
+        if not v and vid not in counts:
+            continue  # produs dezactivat / marcat „nu urmări” între timp
+        v = v or await _variant(vid) or {"variant_id": vid}
+        c = counts.get(vid)
+        items.append({"variant_id": vid, "product_title": v.get("product_title"), "variant_title": v.get("variant_title"),
+                      "sku": v.get("sku"), "image": v.get("image"), "location": v.get("location"),
+                      "counted": c["counted"] if c else None, "before": c.get("before") if c else None,
+                      "counted_by": c.get("by") if c else None, "counted_at": c.get("at") if c else None})
+    done = sum(1 for i in items if i["counted"] is not None)
+    return {"id": sess["id"], "status": sess["status"], "started_at": sess["started_at"],
+            "started_by": sess.get("started_by"), "note": sess.get("note", ""),
+            "total": len(items), "done": done, "items": items}
+
+
+@router.get("/inventory/session")
+async def get_session(_: dict = Depends(get_current_user)):
+    sess = await _open_session()
+    return {"session": await _session_view(sess) if sess else None}
+
+
+class SessionStart(BaseModel):
+    note: Optional[str] = ""
+
+
+@router.post("/inventory/session")
+async def start_session(body: SessionStart, request: Request, user: dict = Depends(get_current_user)):
+    sess = await _open_session()
+    if not sess:
+        targets = await _inv_targets()
+        if not targets:
+            raise HTTPException(400, "Nu există produse de numărat. Sincronizează întâi produsele din Shopify.")
+        sess = {"id": new_id(), "status": "open", "started_at": now_iso(), "started_by": user["name"],
+                "note": (body.note or "").strip(), "order": [v["variant_id"] for v in targets], "counts": {}}
+        await get_db().stock_inventory_sessions.insert_one(dict(sess))
+        await audit.log(resource_type="stock", resource_id=sess["id"], action="stock.inventory_started", actor=user,
+                        details={"products": len(targets)}, ip=audit.client_ip(request))
+    return {"session": await _session_view(sess)}
+
+
+class SessionCount(BaseModel):
+    variant_id: str
+    counted: int = Field(ge=0, le=1_000_000)
+
+
+@router.post("/inventory/session/count")
+async def session_count(body: SessionCount, user: dict = Depends(get_current_user)):
+    db = get_db()
+    sess = await _open_session()
+    if not sess:
+        raise HTTPException(409, "Nu există un inventar în desfășurare.")
+    v = await _variant(body.variant_id)
+    if not v or v.get("bundle"):
+        raise HTTPException(404, "Produs inexistent")
+    s = await get_settings()
+    if not s.get("start_at"):  # primul inventar: urmărirea pornește la prima cantitate salvată
+        await _set_settings(start_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    before = int(v.get("on_hand") or 0)
+    delta = body.counted - before
+    note = f"Inventar {sess['started_at'][:10]}" + (f" — {sess['note']}" if sess.get("note") else "")
+    if delta:
+        await move(body.variant_id, delta, "inventar", note=note, actor=user["name"], ref_kind="inventory",
+                   ref_id=sess["id"], expand_bundle=False)
+    prev = (sess.get("counts") or {}).get(body.variant_id)
+    await db.stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {f"counts.{body.variant_id}": {
+        "counted": body.counted, "before": prev["before"] if prev else before, "by": user["name"], "at": now_iso()}}})
+    return {"session": await _session_view(await _open_session())}
+
+
+@router.post("/inventory/session/finish")
+async def finish_session(request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    sess = await _open_session()
+    if not sess:
+        raise HTTPException(409, "Nu există un inventar în desfășurare.")
+    view = await _session_view(sess)
+    left = view["total"] - view["done"]
+    if left:
+        raise HTTPException(400, f"Mai sunt {left} produse nenumărate. Inventarul se poate finaliza doar după ce sunt numărate toate.")
+    diffs = [i for i in view["items"] if i["counted"] != i["before"]]
+    await db.stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {
+        "status": "done", "finished_at": now_iso(), "finished_by": user["name"],
+        "summary": {"products": view["total"], "changed": len(diffs),
+                    "units": sum(i["counted"] for i in view["items"])}}})
+    await audit.log(resource_type="stock", resource_id=sess["id"], action="stock.inventory", actor=user,
+                    details={"counted": view["total"], "changed": len(diffs), "first": False, "note": sess.get("note"),
+                             "guided": True}, ip=audit.client_ip(request))
+    return {"ok": True, "products": view["total"], "changed": len(diffs)}
+
+
+@router.post("/inventory/session/abandon")
+async def abandon_session(request: Request, user: dict = Depends(require_admin)):
+    sess = await _open_session()
+    if not sess:
+        raise HTTPException(409, "Nu există un inventar în desfășurare.")
+    await get_db().stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {
+        "status": "abandoned", "finished_at": now_iso(), "finished_by": user["name"]}})
+    await audit.log(resource_type="stock", resource_id=sess["id"], action="stock.inventory_abandoned", actor=user,
+                    details={"counted": len(sess.get("counts") or {})}, ip=audit.client_ip(request))
+    return {"ok": True}
+
+
+@router.get("/inventory/sessions")
+async def list_sessions(_: dict = Depends(get_current_user)):
+    out = await get_db().stock_inventory_sessions.find({}, {"_id": 0, "order": 0, "counts": 0}) \
+        .sort("started_at", -1).to_list(50)
+    return out
