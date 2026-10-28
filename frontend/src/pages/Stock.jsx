@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X } from "lucide-react";
+import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { fmtDateTime, fmtAgo } from "../lib/format";
+import { fmtDateTime, fmtAgo, money } from "../lib/format";
 import { Button, Card, Empty, Field, Input, Modal, PageLoader, Pill, Select, Textarea, cx, useToast } from "../components/ui";
 
 const TYPES = {
@@ -19,6 +19,7 @@ const TYPES = {
 const TABS = [
   { id: "stoc", label: "Stocuri" },
   { id: "inventar", label: "Inventar" },
+  { id: "valoare", label: "Valoare stoc" },
   { id: "intrari", label: "Intrări marfă" },
   { id: "miscari", label: "Mișcări" },
   { id: "setari", label: "Setări", admin: true },
@@ -72,6 +73,7 @@ export default function Stock() {
       </div>
       {tab === "stoc" && <StockList summary={summary} onChanged={loadSummary} goInventory={() => nav("/stocuri/inventar")} />}
       {tab === "inventar" && <Inventory summary={summary} onDone={loadSummary} />}
+      {tab === "valoare" && <StockValue />}
       {tab === "intrari" && <Receipts />}
       {tab === "miscari" && <Movements />}
       {tab === "setari" && <StockSettings summary={summary} onSaved={setSummary} />}
@@ -615,5 +617,111 @@ function StockSettings({ summary, onSaved }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+
+function StockValue() {
+  const [d, setD] = useState(null);
+  const [q, setQ] = useState("");
+  const [err, setErr] = useState(null);
+  const load = () => api("/stock/value").then(setD).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const rows = useMemo(() => {
+    if (!d) return [];
+    const s = q.trim().toLowerCase();
+    return s ? d.rows.filter((r) => `${r.product_title} ${r.variant_title} ${r.sku}`.toLowerCase().includes(s)) : d.rows;
+  }, [d, q]);
+  if (err) return <Card className="p-5 text-sm text-red-600">{err}</Card>;
+  if (!d) return <PageLoader />;
+  const miss = d.missing_cost_in_stock;
+  return (
+    <div>
+      {d.cost_error && (
+        <div className="mb-4 rounded-xl bg-red-50 px-5 py-4 text-sm text-red-800 ring-1 ring-red-200">
+          <strong>Hub-ul nu poate citi costurile (COGS) din Shopify.</strong> Aplicația Shopify a hub-ului nu are acces la costul produselor. Eroare: {d.cost_error}
+        </div>
+      )}
+      {miss.length > 0 ? (
+        <div className="mb-4 rounded-xl bg-red-50 px-5 py-4 ring-1 ring-red-200">
+          <div className="flex items-center gap-2 font-semibold text-red-800"><AlertTriangle className="h-5 w-5" /> {miss.length} {miss.length === 1 ? "produs aflat" : "produse aflate"} în depozit fără COGS setat în Shopify ({d.missing_cost_units} buc)</div>
+          <p className="mt-1 text-sm text-red-700">Valoarea stocului de mai jos nu le include. Setează în Shopify „Cost per item” (cost de achiziție fără TVA), apoi apasă „Sincronizează cu Shopify”.</p>
+          <div className="mt-3 divide-y divide-red-100 overflow-hidden rounded-lg bg-white ring-1 ring-red-200">
+            {miss.map((r) => (
+              <div key={r.variant_id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <Thumb src={r.image} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-medium">{productName(r)}</div>
+                  <div className="text-xs text-slate-500">{r.sku || "fără SKU"}{r.status === "DRAFT" && " · Draft"}</div>
+                </div>
+                <span className="whitespace-nowrap tabular font-semibold">{r.on_hand} buc</span>
+                {r.admin_url && <a href={r.admin_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-xs font-medium text-brand hover:bg-brand-50">Setează COGS <ExternalLink className="h-3 w-3" /></a>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : d.products_in_stock > 0 && !d.cost_error && (
+        <div className="mb-4 rounded-xl bg-emerald-50 px-5 py-3 text-sm font-medium text-emerald-800 ring-1 ring-emerald-200">Toate produsele din depozit au COGS setat în Shopify.</div>
+      )}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          ["Valoare stoc (fără TVA)", money(d.value), true],
+          [`Valoare stoc (cu TVA ${Math.round(d.vat_rate * 100)}%)`, money(d.value_vat)],
+          ["Bucăți în depozit", d.units],
+          ["Produse cu stoc", d.products_in_stock],
+        ].map(([l, v, big]) => (
+          <Card key={l} className="p-4">
+            <div className="flex items-center gap-2 text-xs text-slate-500"><Coins className="h-3.5 w-3.5" /> {l}</div>
+            <div className={cx("mt-1 font-bold tabular", big ? "text-2xl text-brand" : "text-2xl")}>{v}</div>
+          </Card>
+        ))}
+      </div>
+      <div className="mb-3 text-xs text-slate-500">
+        Cost = „Cost per item” (COGS) din Shopify, fără TVA. Costurile se actualizează din Shopify în fiecare oră sau la „Sincronizează cu Shopify”
+        {d.last_product_sync && ` · ultima actualizare ${fmtAgo(d.last_product_sync)}`}.
+        {d.missing_cost_no_stock > 0 && ` Alte ${d.missing_cost_no_stock} produse fără COGS nu au stoc acum.`}
+        {!d.started && " Valoarea va fi reală după primul inventar."}
+      </div>
+      <Card className="mb-3 p-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Caută produs sau SKU…" className="pl-9" />
+        </div>
+      </Card>
+      {rows.length === 0 ? <Card><Empty icon={Coins} title="Niciun produs în depozit">După inventar, aici vezi valoarea fiecărui produs din stoc.</Empty></Card> : (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-3">Produs</th>
+                  <th className="px-4 py-3 text-right">În depozit</th>
+                  <th className="px-4 py-3 text-right">Cost / buc</th>
+                  <th className="px-4 py-3 text-right">Valoare</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows.map((r) => (
+                  <tr key={r.variant_id} className={cx(r.cost === null && "bg-red-50/50")}>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <Thumb src={r.image} />
+                        <div className="min-w-0">
+                          <div className="line-clamp-2 font-medium">{r.product_title}</div>
+                          <div className="text-xs text-slate-500">{[r.variant_title, r.sku].filter(Boolean).join(" · ")}{r.status === "DRAFT" && " · Draft"}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular">{r.on_hand}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{r.cost === null ? <span className="font-semibold text-red-600">lipsă COGS</span> : money(r.cost)}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular">{r.value === null ? "—" : money(r.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }

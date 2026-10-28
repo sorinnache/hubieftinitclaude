@@ -116,7 +116,7 @@ query Variants($after: String) {
   productVariants(first: 200, after: $after) {
     pageInfo { hasNextPage endCursor }
     nodes {
-      id title sku
+      id title sku%COST%
       media(first: 1) { nodes { preview { image { url } } } }
       product { id title status featuredMedia { preview { image { url } } } }
     }
@@ -125,11 +125,36 @@ query Variants($after: String) {
 """
 
 
+COST_FIELD = "\n      inventoryItem { unitCost { amount } }"
+
+
+async def _variants_page(after):
+    """Cerem și costul (COGS). Dacă aplicația Shopify nu are acces la cost, sincronizăm restul și semnalăm."""
+    try:
+        data = await shopify.graphql(VARIANTS_QUERY.replace("%COST%", COST_FIELD), {"after": after})
+        return data, None
+    except Exception as e:  # noqa: BLE001
+        if "inventoryItem" not in str(e) and "unitCost" not in str(e) and "access" not in str(e).lower():
+            raise
+        data = await shopify.graphql(VARIANTS_QUERY.replace("%COST%", ""), {"after": after})
+        return data, str(e)[:300]
+
+
+def _cost(v: dict):
+    uc = ((v.get("inventoryItem") or {}).get("unitCost") or {}).get("amount")
+    try:
+        return round(float(uc), 2) if uc is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def sync_products() -> dict:
     db = get_db()
     after, seen, n = None, set(), 0
+    cost_error = None
     while True:
-        data = await shopify.graphql(VARIANTS_QUERY, {"after": after})
+        data, err = await _variants_page(after)
+        cost_error = cost_error or err
         conn = data["productVariants"]
         for v in conn["nodes"]:
             vid = _tail(v["id"])
@@ -143,7 +168,7 @@ async def sync_products() -> dict:
                 "$set": {"product_id": _tail(p.get("id")), "product_title": p.get("title") or "",
                          "variant_title": "" if vt == "Default Title" else vt, "sku": v.get("sku") or "",
                          "image": img, "status": p.get("status") or "ACTIVE", "deleted": False,
-                         "updated_at": now_iso()},
+                         "updated_at": now_iso(), **({} if err else {"cost": _cost(v)})},
                 "$setOnInsert": {"on_hand": 0, "created_at": now_iso()},
             }, upsert=True)
             n += 1
@@ -152,8 +177,8 @@ async def sync_products() -> dict:
         after = conn["pageInfo"]["endCursor"]
     await db.stock_variants.update_many({"variant_id": {"$nin": list(seen)}, "status": {"$ne": "UNKNOWN"}},
                                         {"$set": {"deleted": True}})
-    await _set_settings(last_product_sync=now_iso())
-    return {"variants": n}
+    await _set_settings(last_product_sync=now_iso(), cost_error=cost_error)
+    return {"variants": n, "cost_error": cost_error}
 
 
 # ------------------------------------------------------------------ comenzi
@@ -277,7 +302,7 @@ async def sync_loop():
         try:
             if await shopify._shop():
                 now = asyncio.get_event_loop().time()
-                do_products = now - last_products > 6 * 3600
+                do_products = now - last_products > 3600
                 await sync_all(products=do_products)
                 if do_products:
                     last_products = now
@@ -815,3 +840,47 @@ async def list_sessions(_: dict = Depends(get_current_user)):
     out = await get_db().stock_inventory_sessions.find({}, {"_id": 0, "order": 0, "counts": 0}) \
         .sort("started_at", -1).to_list(50)
     return out
+
+
+# ------------------------------------------------------------------ valoarea stocului
+VAT_RATE = 0.21
+
+
+def _has_cost(v: dict) -> bool:
+    return v.get("cost") is not None and float(v["cost"]) > 0
+
+
+@router.get("/value")
+async def stock_value(_: dict = Depends(get_current_user)):
+    """Valoarea stocului din depozit la costul de achiziție (COGS din Shopify, fără TVA)."""
+    db = get_db()
+    s = await get_settings()
+    shop = (await shopify._shop() or "").strip()
+    vs = await db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
+                                       **NOT_BUNDLE}, {"_id": 0}).to_list(20000)
+    rows, missing_in_stock, missing_no_stock = [], [], 0
+    for v in vs:
+        oh = int(v.get("on_hand") or 0)
+        has = _has_cost(v)
+        r = {k: v.get(k) for k in ("variant_id", "product_id", "product_title", "variant_title", "sku", "image", "status")}
+        r.update(on_hand=oh, cost=v.get("cost") if has else None,
+                 value=round(max(oh, 0) * float(v["cost"]), 2) if has else None,
+                 admin_url=f"https://{shop}/admin/products/{v.get('product_id')}/variants/{v['variant_id']}" if shop else None)
+        if not has:
+            if oh > 0:
+                missing_in_stock.append(r)
+            else:
+                missing_no_stock += 1
+        if oh > 0:
+            rows.append(r)
+    rows.sort(key=lambda r: -(r["value"] or 0))
+    total = round(sum(r["value"] or 0 for r in rows), 2)
+    return {
+        "value": total, "value_vat": round(total * (1 + VAT_RATE), 2), "vat_rate": VAT_RATE,
+        "units": sum(r["on_hand"] for r in rows), "products_in_stock": len(rows),
+        "missing_cost_in_stock": sorted(missing_in_stock, key=lambda r: -r["on_hand"]),
+        "missing_cost_units": sum(r["on_hand"] for r in missing_in_stock),
+        "missing_cost_no_stock": missing_no_stock, "rows": rows,
+        "last_product_sync": s.get("last_product_sync"), "cost_error": s.get("cost_error"),
+        "started": bool(s.get("start_at")),
+    }
