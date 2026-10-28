@@ -14,7 +14,10 @@ const TYPES = {
   retur: { label: "Retur recepționat", cls: "bg-violet-50 text-violet-700 ring-violet-200" },
   refuzat: { label: "Colet refuzat", cls: "bg-violet-50 text-violet-700 ring-violet-200" },
   ajustare: { label: "Ajustare", cls: "bg-orange-50 text-orange-700 ring-orange-200" },
+  inlocuire: { label: "Înlocuire în pachet", cls: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200" },
 };
+
+const bundleSig = (list) => JSON.stringify((list || []).map((c) => [c.variant_id, Number(c.qty), (c.alternates || []).map((a) => a.variant_id)]));
 
 const TABS = [
   { id: "stoc", label: "Stocuri" },
@@ -281,7 +284,7 @@ function ItemModal({ vid, onClose, onChanged }) {
   };
   const saveBundle = async () => {
     try {
-      await api(`/stock/items/${vid}/bundle`, { method: "PUT", body: { components: bundle.map((c) => ({ variant_id: c.variant_id, qty: Number(c.qty) || 1 })) } });
+      await api(`/stock/items/${vid}/bundle`, { method: "PUT", body: { components: bundle.map((c) => ({ variant_id: c.variant_id, qty: Number(c.qty) || 1, alternates: (c.alternates || []).map((a) => a.variant_id) })) } });
       toast.success("Componente salvate");
       load(); onChanged();
     } catch (e) { toast.error(e.message); }
@@ -336,26 +339,19 @@ function ItemModal({ vid, onClose, onChanged }) {
                 catch (err) { toast.error(err.message); }
               }} />
               <span><strong className="inline-flex items-center gap-1"><Layers className="h-4 w-4" /> Acest produs este pachet</strong>
-                <span className="block text-xs text-slate-500">Pachetele nu se numără la inventar. La vânzare se scade stocul fiecărei componente, nu al pachetului.</span></span>
+                <span className="block text-xs text-slate-500">Pachetele nu se numără la inventar. La vânzare se scade stocul fiecărei componente, nu al pachetului. Dacă o componentă are înlocuitor și ea e la 0, se scade automat din înlocuitor.</span></span>
             </label>
             {d.is_bundle && <div className="mt-3">
             {!bundle?.length && <p className="mb-2 text-xs font-medium text-amber-600">Adaugă produsele pe care le conține pachetul, cu cantitatea fiecăruia.</p>}
             {bundle?.map((c, i) => (
-              <div key={c.variant_id} className="mb-2 flex items-center gap-3 rounded-lg bg-slate-50 p-2">
-                <Thumb src={c.image} />
-                <div className="min-w-0 flex-1">
-                  <div className="line-clamp-2 text-sm font-medium">{productName(c)}</div>
-                  <div className="text-xs text-slate-500">{c.sku || "fără SKU"}</div>
-                </div>
-                <Input type="number" min={1} className="w-20 shrink-0 text-right" value={c.qty} onChange={(e) => setBundle(bundle.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
-                <span className="shrink-0 text-xs text-slate-500">buc</span>
-                <button onClick={() => setBundle(bundle.filter((_, j) => j !== i))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
-              </div>
+              <ComponentRow key={c.variant_id} c={c} bundleVid={vid} allIds={bundle.flatMap((x) => [x.variant_id, ...(x.alternates || []).map((a) => a.variant_id)])}
+                onChange={(nc) => setBundle(bundle.map((x, j) => (j === i ? nc : x)))}
+                onRemove={() => setBundle(bundle.filter((_, j) => j !== i))} />
             ))}
-            <ProductPicker placeholder="Adaugă componentă…" exclude={[vid, ...(bundle || []).map((c) => c.variant_id)]}
-              onPick={(r) => setBundle([...(bundle || []), { variant_id: r.variant_id, qty: 1, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image }])} />
+            <ProductPicker placeholder="Adaugă componentă…" exclude={[vid, ...(bundle || []).flatMap((c) => [c.variant_id, ...(c.alternates || []).map((a) => a.variant_id)])]}
+              onPick={(r) => setBundle([...(bundle || []), { variant_id: r.variant_id, qty: 1, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image, alternates: [] }])} />
             <div className="mt-3 flex justify-end">
-              <Button size="sm" onClick={saveBundle} disabled={JSON.stringify((bundle || []).map((c) => [c.variant_id, Number(c.qty)])) === JSON.stringify((d.bundle_components || []).map((c) => [c.variant_id, Number(c.qty)]))}>Salvează componentele</Button>
+              <Button size="sm" onClick={saveBundle} disabled={bundleSig(bundle) === bundleSig(d.bundle_components)}>Salvează componentele</Button>
             </div>
             </div>}
           </div>
@@ -372,7 +368,7 @@ function ItemModal({ vid, onClose, onChanged }) {
             <div className="mb-2 text-sm font-semibold">Istoric mișcări</div>
             {d.movements.length === 0 ? <div className="text-sm text-slate-400">Nicio mișcare încă.</div> : (
               <div className="divide-y divide-slate-100 rounded-lg ring-1 ring-slate-200">
-                {d.movements.map((m) => <MovementRow key={m.id} m={m} />)}
+                {d.movements.map((m) => <MovementRow key={m.id} m={m} onChanged={() => { load(); onChanged(); }} />)}
               </div>
             )}
           </div>
@@ -382,19 +378,102 @@ function ItemModal({ vid, onClose, onChanged }) {
   );
 }
 
-function MovementRow({ m, showProduct }) {
+function MovementRow({ m, showProduct, onChanged }) {
   const t = TYPES[m.type] || { label: m.type, cls: "bg-slate-100 text-slate-600 ring-slate-200" };
+  const [swap, setSwap] = useState(false);
+  const canSwap = m.type === "vanzare" && m.bundle_variant_id && m.delta < 0 && !m.swapped_to;
+  const info = [m.ref, m.note, m.component_of_title && `înlocuitor pentru ${m.component_of_title}`,
+    m.via_bundle && (m.bundle_title ? `din pachetul ${m.bundle_title}` : "din pachet"),
+    m.swapped_to && "înlocuit ulterior"].filter(Boolean).join(" · ");
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
       <span className={cx("w-14 text-right font-semibold tabular", m.delta > 0 ? "text-emerald-600" : "text-red-600")}>{m.delta > 0 ? `+${m.delta}` : m.delta}</span>
       <Pill className={t.cls}>{t.label}</Pill>
       <div className="min-w-0 flex-1">
         {showProduct && <div className="truncate font-medium">{productName(m)}</div>}
-        <div className="truncate text-xs text-slate-500">{[m.ref, m.note, m.via_bundle ? "din pachet" : ""].filter(Boolean).join(" · ") || "—"}</div>
+        <div className="line-clamp-2 text-xs text-slate-500">{info || "—"}</div>
       </div>
+      {canSwap && onChanged && (
+        <Button size="sm" variant="outline" onClick={() => setSwap(true)} title="Depozitul a trimis alt produs echivalent">S-a trimis alt produs</Button>
+      )}
       <div className="text-right text-xs text-slate-400">
         <div>sold {m.on_hand_after}</div>
         <div>{fmtDateTime(m.created_at)} · {m.actor}</div>
+      </div>
+      {swap && <SwapModal m={m} onClose={() => setSwap(false)} onDone={() => { setSwap(false); onChanged?.(); }} />}
+    </div>
+  );
+}
+
+function SwapModal({ m, onClose, onDone }) {
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(null);
+  useEffect(() => { api(`/stock/movements/${m.id}/swap-options`).then(setD).catch((e) => { toast.error(e.message); onClose(); }); }, []); // eslint-disable-line
+  const pick = async (vid) => {
+    setBusy(vid);
+    try {
+      await api(`/stock/movements/${m.id}/swap`, { method: "POST", body: { variant_id: vid } });
+      toast.success("Corectat: stocul a revenit pe produsul scăzut inițial și s-a scăzut din cel trimis");
+      onDone();
+    } catch (e) { toast.error(e.message); } finally { setBusy(null); }
+  };
+  return (
+    <Modal open onClose={onClose} title="Ce produs s-a trimis efectiv?">
+      {!d ? <PageLoader /> : (
+        <div className="space-y-3 text-sm">
+          <p className="text-slate-600">Comanda <strong>{m.ref}</strong> · pachetul <strong>{d.bundle}</strong>. Sistemul a scăzut <strong>{-m.delta} × {d.current}</strong>. Alege produsul care a plecat de fapt:</p>
+          {d.options.length === 0 ? <div className="text-slate-500">Componenta nu are înlocuitori setați.</div> : d.options.map((o) => (
+            <button key={o.variant_id} disabled={!!busy} onClick={() => pick(o.variant_id)}
+              className="flex w-full items-center gap-3 rounded-lg p-2 text-left ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">
+              <Thumb src={o.image} />
+              <div className="min-w-0 flex-1">
+                <div className="line-clamp-2 font-medium">{o.title}</div>
+                <div className="text-xs text-slate-500">{o.sku || "fără SKU"} · în depozit {o.on_hand}{o.primary && " · produsul principal"}</div>
+              </div>
+              {busy === o.variant_id && <RefreshCw className="h-4 w-4 animate-spin" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function ComponentRow({ c, bundleVid, allIds, onChange, onRemove }) {
+  const [adding, setAdding] = useState(false);
+  const alts = c.alternates || [];
+  return (
+    <div className="mb-2 rounded-lg bg-slate-50 p-2">
+      <div className="flex items-center gap-3">
+        <Thumb src={c.image} />
+        <div className="min-w-0 flex-1">
+          <div className="line-clamp-2 text-sm font-medium">{productName(c)}</div>
+          <div className="text-xs text-slate-500">{c.sku || "fără SKU"}{c.on_hand !== undefined && ` · în depozit ${c.on_hand}`}</div>
+        </div>
+        <Input type="number" min={1} className="w-20 shrink-0 text-right" value={c.qty} onChange={(e) => onChange({ ...c, qty: e.target.value })} />
+        <span className="shrink-0 text-xs text-slate-500">buc</span>
+        <button onClick={onRemove} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+      </div>
+      <div className="ml-[52px] mt-2 space-y-1.5">
+        {alts.map((a, k) => (
+          <div key={a.variant_id} className="flex items-center gap-2 rounded-md bg-white px-2 py-1.5 text-xs ring-1 ring-slate-200">
+            <span className="shrink-0 rounded bg-fuchsia-50 px-1.5 py-0.5 font-semibold text-fuchsia-700">Înlocuitor {alts.length > 1 ? k + 1 : ""}</span>
+            <span className="min-w-0 flex-1 truncate">{productName(a)} <span className="text-slate-400">· {a.sku || "fără SKU"}{a.on_hand !== undefined && ` · în depozit ${a.on_hand}`}</span></span>
+            <button onClick={() => onChange({ ...c, alternates: alts.filter((_, j) => j !== k) })} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        ))}
+        {adding ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1"><ProductPicker placeholder="Caută produsul înlocuitor…" exclude={[bundleVid, ...allIds]}
+              onPick={(r) => { onChange({ ...c, alternates: [...alts, { variant_id: r.variant_id, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image, on_hand: r.on_hand }] }); setAdding(false); }} /></div>
+            <button onClick={() => setAdding(false)} className="rounded p-1.5 text-slate-400 hover:bg-slate-200"><X className="h-4 w-4" /></button>
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-xs font-medium text-fuchsia-700 hover:underline">
+            <Plus className="h-3.5 w-3.5" /> Înlocuitor (dacă nu avem produsul, trimitem altul echivalent)
+          </button>
+        )}
       </div>
     </div>
   );
@@ -581,7 +660,8 @@ function Receipts() {
 function Movements() {
   const [type, setType] = useState("");
   const [rows, setRows] = useState(null);
-  useEffect(() => { setRows(null); api(`/stock/movements?limit=500${type ? `&type=${type}` : ""}`).then(setRows).catch(() => setRows([])); }, [type]);
+  const load = () => api(`/stock/movements?limit=500${type ? `&type=${type}` : ""}`).then(setRows).catch(() => setRows([]));
+  useEffect(() => { setRows(null); load(); }, [type]); // eslint-disable-line
   return (
     <div>
       <Card className="mb-4 p-3">
@@ -592,7 +672,7 @@ function Movements() {
       </Card>
       {!rows ? <PageLoader /> : rows.length === 0 ? <Card><Empty title="Nicio mișcare" /></Card> : (
         <Card className="divide-y divide-slate-100">
-          {rows.map((m) => <MovementRow key={m.id} m={m} showProduct />)}
+          {rows.map((m) => <MovementRow key={m.id} m={m} showProduct onChanged={load} />)}
         </Card>
       )}
     </div>
