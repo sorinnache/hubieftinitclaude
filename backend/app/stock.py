@@ -62,6 +62,13 @@ async def _set_settings(**fields):
     await get_db().settings.update_one({"key": "stock"}, {"$set": fields}, upsert=True)
 
 
+def is_bundle(v: Optional[dict]) -> bool:
+    """Pachet = bifat manual ca pachet sau cu componente definite. Pachetele nu au stoc propriu și nu se numără."""
+    return bool(v) and (bool(v.get("is_bundle")) or bool(v.get("bundle")))
+
+
+NOT_BUNDLE = {"is_bundle": {"$ne": True}, "bundle": {"$in": [None, []]}}
+
 # ------------------------------------------------------------------ mișcări
 async def _variant(vid: str) -> Optional[dict]:
     return await get_db().stock_variants.find_one({"variant_id": vid}, {"_id": 0})
@@ -354,6 +361,7 @@ def _row(v: dict, reserved: dict) -> dict:
     on_hand = int(v.get("on_hand") or 0)
     return {**{k: v.get(k) for k in ("variant_id", "product_id", "product_title", "variant_title", "sku", "image",
                                       "status", "deleted", "bundle", "min_stock", "location", "untracked")},
+            "is_bundle": is_bundle(v),
             "on_hand": on_hand, "reserved": r["qty"], "available": on_hand - r["qty"]}
 
 
@@ -384,11 +392,15 @@ async def list_items(q: Optional[str] = None, view: str = "active", _: dict = De
                 avail.append(cv["available"] // max(1, int(c["qty"])))
             r["bundle_available"] = min(avail) if avail else 0
     if view == "negative":
-        rows = [r for r in rows if r["available"] < 0 and not r.get("bundle")]
+        rows = [r for r in rows if r["available"] < 0 and not r["is_bundle"]]
     elif view == "reserved":
         rows = [r for r in rows if r["reserved"] > 0]
     elif view == "bundles":
-        rows = [r for r in rows if r.get("bundle")]
+        rows = [r for r in rows if r["is_bundle"]]
+    elif view == "bundles_todo":
+        rows = [r for r in rows if r["is_bundle"] and not r.get("bundle")]
+    elif view == "products":
+        rows = [r for r in rows if not r["is_bundle"]]
     return rows
 
 
@@ -401,7 +413,7 @@ async def summary(_: dict = Depends(get_current_user)):
     negative = 0
     count = 0
     async for v in db.stock_variants.find({"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True},
-                                           "bundle": {"$in": [None, []]}},
+                                           **NOT_BUNDLE},
                                           {"_id": 0, "variant_id": 1, "on_hand": 1}):
         count += 1
         oh = int(v.get("on_hand") or 0)
@@ -475,7 +487,7 @@ async def save_inventory(body: InventoryBody, request: Request, user: dict = Dep
         v = await _variant(it.variant_id)
         if not v:
             continue
-        if v.get("bundle"):
+        if is_bundle(v):
             continue  # pachetele nu au stoc propriu
         delta = it.counted - int(v.get("on_hand") or 0)
         if delta:
@@ -573,10 +585,10 @@ async def set_bundle(vid: str, body: BundleBody, request: Request, user: dict = 
         cv = await _variant(c.variant_id)
         if not cv:
             raise HTTPException(400, "Componentă inexistentă")
-        if cv.get("bundle"):
+        if is_bundle(cv):
             raise HTTPException(400, "O componentă nu poate fi la rândul ei pachet")
         comps.append(c.model_dump())
-    await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"bundle": comps or None}})
+    await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"bundle": comps or None, "is_bundle": bool(comps) or bool(v.get("is_bundle"))}})
     if comps and int(v.get("on_hand") or 0):
         # un pachet nu are stoc propriu: aducem soldul lui la 0
         await move(vid, -int(v["on_hand"]), "ajustare", note="Transformat în pachet — stocul se ține pe componente",
@@ -590,12 +602,30 @@ class ItemMeta(BaseModel):
     min_stock: Optional[int] = None
     location: Optional[str] = None
     untracked: Optional[bool] = None
+    is_bundle: Optional[bool] = None
 
 
 @router.patch("/items/{vid}")
-async def set_meta(vid: str, body: ItemMeta, _: dict = Depends(get_current_user)):
+async def set_meta(vid: str, body: ItemMeta, request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    v = await _variant(vid)
+    if not v:
+        raise HTTPException(404, "Produs inexistent")
     upd = body.model_dump(exclude_unset=True)
-    await get_db().stock_variants.update_one({"variant_id": vid}, {"$set": upd})
+    if "is_bundle" in upd:
+        if upd["is_bundle"]:
+            used = await db.stock_variants.find_one({"bundle.variant_id": vid}, {"_id": 0, "product_title": 1})
+            if used:
+                raise HTTPException(400, f"Produsul e componentă în pachetul „{used.get('product_title')}”, deci nu poate fi pachet.")
+        else:
+            upd["bundle"] = None  # nu mai e pachet: ștergem și componentele
+        if upd["is_bundle"] and int(v.get("on_hand") or 0):
+            await move(vid, -int(v["on_hand"]), "ajustare", note="Marcat ca pachet — stocul se ține pe componente",
+                       actor=user["name"], expand_bundle=False)
+        await audit.log(resource_type="stock", resource_id=vid, action="stock.bundle", actor=user,
+                        details={"product": v.get("product_title"), "is_bundle": upd["is_bundle"]},
+                        ip=audit.client_ip(request))
+    await db.stock_variants.update_one({"variant_id": vid}, {"$set": upd})
     return {"ok": True}
 
 
@@ -651,7 +681,7 @@ def _inv_sort_key(v: dict):
 async def _inv_targets() -> list[dict]:
     db = get_db()
     vs = await db.stock_variants.find({"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True},
-                                       "bundle": {"$in": [None, []]}}, {"_id": 0}).to_list(20000)
+                                       **NOT_BUNDLE}, {"_id": 0}).to_list(20000)
     return sorted(vs, key=_inv_sort_key)
 
 
@@ -676,6 +706,8 @@ async def _session_view(sess: dict) -> dict:
         if not v and vid not in counts:
             continue  # produs dezactivat / marcat „nu urmări” între timp
         v = v or await _variant(vid) or {"variant_id": vid}
+        if is_bundle(v):
+            continue  # marcat ca pachet între timp — pachetele nu se numără
         c = counts.get(vid)
         items.append({"variant_id": vid, "product_title": v.get("product_title"), "variant_title": v.get("variant_title"),
                       "sku": v.get("sku"), "image": v.get("image"), "location": v.get("location"),
@@ -724,8 +756,10 @@ async def session_count(body: SessionCount, user: dict = Depends(get_current_use
     if not sess:
         raise HTTPException(409, "Nu există un inventar în desfășurare.")
     v = await _variant(body.variant_id)
-    if not v or v.get("bundle"):
+    if not v:
         raise HTTPException(404, "Produs inexistent")
+    if is_bundle(v):
+        raise HTTPException(400, "Produsul e marcat ca pachet — pachetele nu se numără.")
     s = await get_settings()
     if not s.get("start_at"):  # primul inventar: urmărirea pornește la prima cantitate salvată
         await _set_settings(start_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))

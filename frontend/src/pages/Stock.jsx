@@ -104,8 +104,18 @@ function useItems(view = "active") {
 }
 
 function StockList({ summary, onChanged, goInventory }) {
+  const toast = useToast();
   const [view, setView] = useState("active");
   const [items, reload] = useItems(view);
+  const toggleBundle = async (r, on) => {
+    if (on && r.on_hand && !window.confirm(`„${productName(r)}” are ${r.on_hand} buc în depozit. Un pachet nu are stoc propriu, așa că soldul lui devine 0 (stocul se ține pe componente). Continui?`)) return;
+    if (!on && r.bundle?.length && !window.confirm("Debifezi pachetul? Componentele setate pentru el se șterg.")) return;
+    try {
+      await api(`/stock/items/${r.variant_id}`, { method: "PATCH", body: { is_bundle: on } });
+      toast.success(on ? "Marcat ca pachet — nu mai apare la inventar" : "Nu mai e pachet");
+      reload(); onChanged?.();
+    } catch (e) { toast.error(e.message); }
+  };
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(null);
   const rows = useMemo(() => {
@@ -147,7 +157,9 @@ function StockList({ summary, onChanged, goInventory }) {
             <option value="active">Produse active</option>
             <option value="reserved">Doar cu rezervări</option>
             <option value="negative">Disponibil sub zero</option>
-            <option value="bundles">Pachete</option>
+            <option value="products">Doar produse (fără pachete)</option>
+            <option value="bundles">Doar pachete</option>
+            <option value="bundles_todo">Pachete fără componente setate</option>
             <option value="untracked">Nu se urmăresc (garanții, servicii)</option>
             <option value="all">Toate (inclusiv draft/arhivate)</option>
           </Select>
@@ -161,6 +173,7 @@ function StockList({ summary, onChanged, goInventory }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="w-16 px-3 py-3 text-center" title="Bifează produsele care sunt pachete">Pachet</th>
                   <th className="px-4 py-3">Produs</th>
                   <th className="hidden px-4 py-3 md:table-cell">SKU</th>
                   <th className="px-4 py-3 text-right">În depozit</th>
@@ -170,7 +183,11 @@ function StockList({ summary, onChanged, goInventory }) {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((r) => (
-                  <tr key={r.variant_id} onClick={() => setOpen(r.variant_id)} className="cursor-pointer hover:bg-slate-50">
+                  <tr key={r.variant_id} onClick={() => setOpen(r.variant_id)} className={cx("cursor-pointer hover:bg-slate-50", r.is_bundle && "bg-violet-50/40")}>
+                    <td className="px-3 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="h-5 w-5 cursor-pointer accent-violet-600" checked={!!r.is_bundle}
+                        onChange={(e) => toggleBundle(r, e.target.checked)} />
+                    </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-3">
                         <Thumb src={r.image} />
@@ -178,15 +195,19 @@ function StockList({ summary, onChanged, goInventory }) {
                           <div className="line-clamp-2 font-medium">{r.product_title}</div>
                           <div className="text-xs text-slate-500">
                             {r.variant_title}
-                            {r.bundle && <Pill className="ml-1 bg-violet-50 text-violet-700 ring-violet-200"><Layers className="mr-1 h-3 w-3" />Pachet</Pill>}
+                            {r.is_bundle && <Pill className="ml-1 bg-violet-50 text-violet-700 ring-violet-200"><Layers className="mr-1 h-3 w-3" />Pachet</Pill>}
                             {r.status !== "ACTIVE" && <Pill className="ml-1 bg-slate-100 text-slate-500 ring-slate-200">{r.status === "DRAFT" ? "Draft" : r.status === "ARCHIVED" ? "Arhivat" : r.status}</Pill>}
                           </div>
                         </div>
                       </div>
                     </td>
                     <td className="hidden whitespace-nowrap px-4 py-2.5 font-mono text-xs text-slate-500 md:table-cell">{r.sku || "—"}</td>
-                    {r.bundle ? (
-                      <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-slate-500">se pot face <strong className="text-slate-900">{r.bundle_available ?? 0}</strong> pachete din stoc</td>
+                    {r.is_bundle ? (
+                      <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-slate-500">
+                        {r.bundle?.length
+                          ? <>se pot face <strong className="text-slate-900">{r.bundle_available ?? 0}</strong> pachete din stoc</>
+                          : <span className="font-medium text-amber-600">componente nesetate — click ca să le adaugi</span>}
+                      </td>
                     ) : (
                       <>
                         <td className="px-4 py-2.5 text-right"><Qty v={r.on_hand} /></td>
@@ -212,7 +233,7 @@ function ProductPicker({ onPick, exclude = [], placeholder = "Caută produsul…
   const res = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!items || s.length < 2) return [];
-    return items.filter((r) => !exclude.includes(r.variant_id) && (allowBundles || !r.bundle)
+    return items.filter((r) => !exclude.includes(r.variant_id) && (allowBundles || !r.is_bundle)
       && `${r.product_title} ${r.variant_title} ${r.sku}`.toLowerCase().includes(s)).slice(0, 12);
   }, [items, q, exclude, allowBundles]);
   return (
@@ -256,7 +277,7 @@ function ItemModal({ vid, onClose, onChanged }) {
   const saveBundle = async () => {
     try {
       await api(`/stock/items/${vid}/bundle`, { method: "PUT", body: { components: bundle.map((c) => ({ variant_id: c.variant_id, qty: Number(c.qty) || 1 })) } });
-      toast.success(bundle.length ? "Pachet salvat" : "Produsul nu mai e pachet");
+      toast.success("Componente salvate");
       load(); onChanged();
     } catch (e) { toast.error(e.message); }
   };
@@ -269,7 +290,7 @@ function ItemModal({ vid, onClose, onChanged }) {
             <Thumb src={d.image} />
             <div className="text-sm text-slate-500">SKU <span className="font-mono text-slate-800">{d.sku || "—"}</span></div>
           </div>
-          {!d.bundle && (
+          {!d.is_bundle && (
             <div className="grid grid-cols-3 gap-3">
               {[["În depozit", d.on_hand], ["Rezervat", d.reserved], ["Disponibil", d.available]].map(([l, v]) => (
                 <div key={l} className="rounded-lg bg-slate-50 px-3 py-2.5">
@@ -289,7 +310,7 @@ function ItemModal({ vid, onClose, onChanged }) {
             </div>
           )}
 
-          {!d.bundle && (
+          {!d.is_bundle && (
             <div className="rounded-xl ring-1 ring-slate-200 p-4">
               <div className="mb-2 text-sm font-semibold">Ajustare manuală</div>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-[120px_1fr_auto]">
@@ -301,8 +322,19 @@ function ItemModal({ vid, onClose, onChanged }) {
           )}
 
           <div className="rounded-xl ring-1 ring-slate-200 p-4">
-            <div className="mb-1 flex items-center gap-2 text-sm font-semibold"><Layers className="h-4 w-4" /> Pachet</div>
-            <p className="mb-3 text-xs text-slate-500">Dacă acest produs e un pachet, adaugă componentele. La vânzare se scade stocul fiecărei componente, nu al pachetului.</p>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={!!d.is_bundle} onChange={async (e) => {
+                const on = e.target.checked;
+                if (on && d.on_hand && !window.confirm(`Produsul are ${d.on_hand} buc în depozit. Un pachet nu are stoc propriu, așa că soldul devine 0. Continui?`)) return;
+                if (!on && d.bundle_components?.length && !window.confirm("Debifezi pachetul? Componentele setate se șterg.")) return;
+                try { await api(`/stock/items/${vid}`, { method: "PATCH", body: { is_bundle: on } }); load(); onChanged(); }
+                catch (err) { toast.error(err.message); }
+              }} />
+              <span><strong className="inline-flex items-center gap-1"><Layers className="h-4 w-4" /> Acest produs este pachet</strong>
+                <span className="block text-xs text-slate-500">Pachetele nu se numără la inventar. La vânzare se scade stocul fiecărei componente, nu al pachetului.</span></span>
+            </label>
+            {d.is_bundle && <div className="mt-3">
+            {!bundle?.length && <p className="mb-2 text-xs font-medium text-amber-600">Adaugă produsele pe care le conține pachetul, cu cantitatea fiecăruia.</p>}
             {bundle?.map((c, i) => (
               <div key={c.variant_id} className="mb-2 flex items-center gap-2">
                 <div className="min-w-0 flex-1 truncate text-sm">{productName(c)}</div>
@@ -313,8 +345,9 @@ function ItemModal({ vid, onClose, onChanged }) {
             <ProductPicker placeholder="Adaugă componentă…" exclude={[vid, ...(bundle || []).map((c) => c.variant_id)]}
               onPick={(r) => setBundle([...(bundle || []), { variant_id: r.variant_id, qty: 1, product_title: r.product_title, variant_title: r.variant_title }])} />
             <div className="mt-3 flex justify-end">
-              <Button size="sm" onClick={saveBundle} disabled={JSON.stringify((bundle || []).map((c) => [c.variant_id, Number(c.qty)])) === JSON.stringify((d.bundle_components || []).map((c) => [c.variant_id, Number(c.qty)]))}>Salvează pachetul</Button>
+              <Button size="sm" onClick={saveBundle} disabled={JSON.stringify((bundle || []).map((c) => [c.variant_id, Number(c.qty)])) === JSON.stringify((d.bundle_components || []).map((c) => [c.variant_id, Number(c.qty)]))}>Salvează componentele</Button>
             </div>
+            </div>}
           </div>
 
           <label className="flex items-start gap-2 rounded-xl p-4 text-sm ring-1 ring-slate-200">
@@ -368,7 +401,7 @@ function Inventory({ summary, onDone }) {
   const rows = useMemo(() => {
     if (!items) return null;
     const s = q.trim().toLowerCase();
-    return items.filter((r) => !r.bundle && (!s || `${r.product_title} ${r.variant_title} ${r.sku}`.toLowerCase().includes(s)));
+    return items.filter((r) => !r.is_bundle && (!s || `${r.product_title} ${r.variant_title} ${r.sku}`.toLowerCase().includes(s)));
   }, [items, q]);
   const filled = Object.entries(counts).filter(([, v]) => v !== "" && v !== undefined);
   const save = async () => {
