@@ -164,9 +164,11 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
     costs = {v["variant_id"]: v for v in await db.stock_variants.find(
         {}, {"_id": 0, "variant_id": 1, "cost": 1, "product_title": 1, "variant_title": 1, "sku": 1, "untracked": 1}).to_list(50000)}
 
-    # vânzări: comenzi livrate în lună
+    # vânzări: comenzile PLASATE în lună care au ajuns la statusul DELIVERED (oricând au fost livrate)
     gross, orders_delivered, cogs_net, missing = 0.0, 0, 0.0, {}
-    async for o in db.profit_orders.find({"delivered_at": {"$gte": a, "$lt": b}, "cancelled": False, "test": {"$ne": True}},
+    placed = await db.profit_orders.count_documents({"created_at": {"$gte": a, "$lt": b}, "test": {"$ne": True}})
+    async for o in db.profit_orders.find({"created_at": {"$gte": a, "$lt": b}, "delivered_at": {"$ne": None},
+                                          "cancelled": False, "test": {"$ne": True}},
                                          {"_id": 0, "total": 1, "lines": 1}):
         orders_delivered += 1
         gross += o["total"]
@@ -185,14 +187,13 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
                 continue
             cogs_net += float(c) * l["qty"]
 
-    # colete expediate în lună (toate, inclusiv cele refuzate ulterior)
-    parcels = 0
-    async for o in db.profit_orders.find({"fulfillments": {"$elemMatch": {"created_at": {"$gte": a, "$lt": b},
-                                                                          "status": "SUCCESS"}},
+    # colete trimise pentru comenzile plasate în lună (toate, inclusiv cele refuzate ulterior)
+    parcels, shipped_orders = 0, 0
+    async for o in db.profit_orders.find({"created_at": {"$gte": a, "$lt": b}, "fulfillments.status": "SUCCESS",
                                           "test": {"$ne": True}}, {"_id": 0, "fulfillments": 1}):
-        parcels += sum(1 for f in o["fulfillments"] if f["status"] == "SUCCESS" and a <= (f["created_at"] or "") < b)
-    shipped_orders = await db.profit_orders.count_documents({"fulfillments": {"$elemMatch": {
-        "created_at": {"$gte": a, "$lt": b}, "status": "SUCCESS"}}, "test": {"$ne": True}})
+        n = sum(1 for f in o["fulfillments"] if f["status"] == "SUCCESS")
+        parcels += n
+        shipped_orders += 1 if n else 0
     return_pickups = 0
     if s.get("include_return_pickups"):
         a_loc = datetime.fromisoformat(a.replace("Z", "+00:00")).isoformat()
@@ -236,7 +237,7 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
     r2 = lambda x: round(x, 2)  # noqa: E731
     out = {
         "period": period, "gross_sales": r2(gross), "revenue": r2(revenue), "vat_collected": r2(vat_collected),
-        "orders_delivered": orders_delivered, "aov": r2(gross / orders_delivered) if orders_delivered else 0,
+        "orders_delivered": orders_delivered, "orders_placed": placed, "aov": r2(gross / orders_delivered) if orders_delivered else 0,
         "parcels": parcels, "shipped_orders": shipped_orders, "return_pickups": return_pickups,
         "parcel_cost": parcel_cost, "cogs": r2(cogs), "courier": r2(courier), "ads": {k2: r2(v * k) for k2, v in ads.items()},
         "ads_total": r2(ads_cost), "fixed": r2(fixed), "fixed_list": fixed_list, "other": r2(other),

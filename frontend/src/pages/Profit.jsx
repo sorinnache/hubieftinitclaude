@@ -101,7 +101,8 @@ function MonthsTable({ months, active, onPick }) {
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
               <th className="px-4 py-3">Luna</th>
-              <th className="px-4 py-3 text-right">Comenzi livrate</th>
+              <th className="px-4 py-3 text-right">Plasate</th>
+              <th className="px-4 py-3 text-right">Livrate</th>
               <th className="px-4 py-3 text-right">Vânzări livrate</th>
               <th className="px-4 py-3 text-right">Colete trimise</th>
               <th className="px-4 py-3 text-right">Costuri totale</th>
@@ -116,6 +117,7 @@ function MonthsTable({ months, active, onPick }) {
                   {label(m.period)}
                   {m.ads_total === 0 && <span className="ml-2 text-xs font-normal text-amber-600">reclame neintroduse</span>}
                 </td>
+                <td className="px-4 py-2.5 text-right tabular text-slate-500">{m.orders_placed}</td>
                 <td className="px-4 py-2.5 text-right tabular">{m.orders_delivered}</td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{money(m.gross_sales)}</td>
                 <td className="px-4 py-2.5 text-right tabular">{m.parcels}</td>
@@ -189,12 +191,12 @@ function MonthDetail({ period, onSaved }) {
           </div>
         </div>
         <div className="divide-y divide-slate-100 px-5 py-2 text-sm">
-          <Line label="Vânzări livrate (cu TVA)" value={d.gross_sales} sub={`${d.orders_delivered} comenzi livrate în lună · valoare medie ${money(d.aov)}`} />
+          <Line label="Vânzări livrate (cu TVA)" value={d.gross_sales} sub={`${d.orders_delivered} livrate din ${d.orders_placed} comenzi plasate în lună (${d.orders_placed ? Math.round(d.orders_delivered / d.orders_placed * 100) : 0}%) · valoare medie ${money(d.aov)}`} />
           {d.vat_payer && <Line label={`TVA colectat`} value={d.vat_collected} neg sub="se plătește la stat" />}
           <Line label={d.vat_payer ? "Venituri fără TVA" : "Venituri"} value={d.revenue} strong />
           <Line label="Cost marfă vândută (COGS)" value={d.cogs} neg sub={`din costurile setate în Shopify, fără TVA${k}`} />
           <Line label="Coletare" value={d.courier} neg
-            sub={`${d.parcels} colete trimise în lună (${d.shipped_orders} comenzi, inclusiv cele refuzate)${d.return_pickups ? ` + ${d.return_pickups} ridicări retur` : ""} × ${money(d.parcel_cost)}${k}`} />
+            sub={`${d.parcels} colete trimise pentru comenzile plasate în lună (${d.shipped_orders} comenzi, inclusiv cele refuzate)${d.return_pickups ? ` + ${d.return_pickups} ridicări retur` : ""} × ${money(d.parcel_cost)}${k}`} />
           <Line label="Reclame" value={d.ads_total} neg
             sub={`Facebook ${money(d.ads.facebook)} · Google ${money(d.ads.google)} · TikTok ${money(d.ads.tiktok)}${d.roas ? ` · ROAS ${d.roas}` : ""}`} />
           <Line label="Costuri fixe lunare" value={d.fixed} neg sub={(d.fixed_list || []).map((c) => `${c.name} ${money(c.amount)}`).join(" · ") || "nesetate"} />
