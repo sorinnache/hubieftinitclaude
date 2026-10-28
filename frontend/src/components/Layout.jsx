@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink } from "lucide-react";
+import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import { cx } from "./ui";
@@ -57,6 +57,7 @@ export default function Layout({ children }) {
         <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Module</div>
         <NavItem to="/retururi" icon={RotateCcw} count={counts.return}>Retururi</NavItem>
         <NavItem to="/service" icon={Wrench} count={counts.service}>Service & schimb</NavItem>
+        <NavItem to="/stocuri" icon={Boxes}>Stocuri</NavItem>
         <div className="px-3 pb-1 pt-5 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Administrare</div>
         {isAdmin && <NavItem to="/istoric" icon={History}>Registru activitate</NavItem>}
         <NavItem to="/setari" icon={Settings}>Setări</NavItem>

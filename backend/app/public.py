@@ -101,7 +101,8 @@ def _pick_items(order: dict, items: list[Item]) -> list[dict]:
             raise HTTPException(400, "Produs inexistent în comandă")
         if it.quantity > int(li.get("quantity") or 1):
             raise HTTPException(400, f"Cantitate prea mare pentru {li['title']}")
-        out.append({"line_item_id": li["id"], "product_id": li.get("product_id"), "title": li["title"],
+        out.append({"line_item_id": li["id"], "product_id": li.get("product_id"), "variant_id": li.get("variant_id"),
+                    "title": li["title"],
                     "variant_title": li.get("variant_title"), "sku": li.get("sku"), "quantity": it.quantity,
                     "price": li.get("price"), "image": li.get("image"), "reason": (it.reason or "").strip()})
     if not out:

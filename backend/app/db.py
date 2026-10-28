@@ -43,3 +43,8 @@ async def ensure_indexes():
     await db.shipments.create_index([("ref_type", 1), ("ref_id", 1)])
     await db.users.create_index("email", unique=True)
     await db.notes.create_index([("ref_type", 1), ("ref_id", 1)])
+    await db.stock_variants.create_index("variant_id", unique=True)
+    await db.stock_orders.create_index("order_id", unique=True)
+    await db.stock_orders.create_index("reserving")
+    await db.stock_movements.create_index([("variant_id", 1), ("created_at", -1)])
+    await db.stock_movements.create_index("created_at")

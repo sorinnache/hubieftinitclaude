@@ -285,6 +285,8 @@ export function describe(h) {
       return { title: `Email trimis clientului (${d.to})`, body: d.subject };
     case "order_refreshed":
       return { title: "Datele comenzii reîncărcate din Shopify" };
+    case "stock_restocked":
+      return { title: "Produsele au fost readăugate în stoc", body: d.skipped?.length ? `Nu s-au putut identifica: ${d.skipped.join(", ")}` : null };
     case "legacy_event":
       return { title: d.text || "Eveniment" };
     default:

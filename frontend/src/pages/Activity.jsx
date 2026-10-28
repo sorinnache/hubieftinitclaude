@@ -6,7 +6,7 @@ import { fmtDateTime } from "../lib/format";
 import { describe } from "../components/CaseParts";
 import { Card, Input, PageLoader, Select, useToast } from "../components/ui";
 
-const TYPES = { "": "Toate", return: "Retururi", service: "Service", user: "Utilizatori", settings: "Setări" };
+const TYPES = { "": "Toate", return: "Retururi", service: "Service", stock: "Stocuri", user: "Utilizatori", settings: "Setări" };
 
 const OTHER = {
   "user.login": "Autentificare",
@@ -21,6 +21,11 @@ const OTHER = {
   "shopify.connected": "Shopify conectat",
   "problem_type.created": "Tip problemă adăugat",
   "problem_type.updated": "Tip problemă modificat",
+  "stock.inventory": "Inventar stoc salvat",
+  "stock.receipt": "Intrare marfă",
+  "stock.adjust": "Ajustare stoc",
+  "stock.bundle": "Pachet modificat",
+  "stock.settings": "Reguli stoc modificate",
 };
 
 export default function Activity() {

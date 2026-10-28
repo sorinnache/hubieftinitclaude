@@ -345,6 +345,14 @@ def build_router(kind: str) -> APIRouter:
         if "status_id" in changes:
             await audit.log(resource_type=kind, resource_id=item_id, action="status_changed", actor=user,
                             details=changes.pop("status_id"), ip=ip)
+            if kind == "return":
+                from . import stock  # import local ca să evităm dependența circulară
+                if stock.is_received_status(statuses[upd["status_id"]]["name"]):
+                    try:
+                        await stock.restock_return({**cur, **upd}, user)
+                    except Exception as e:  # noqa: BLE001
+                        await audit.log(resource_type=kind, resource_id=item_id, action="legacy_event",
+                                        details={"text": f"Readăugarea în stoc a eșuat: {e}"})
         if changes:
             await audit.log(resource_type=kind, resource_id=item_id, action="updated", actor=user,
                             details={"fields": {FIELD_LABELS.get(f, f): c for f, c in changes.items()}}, ip=ip)

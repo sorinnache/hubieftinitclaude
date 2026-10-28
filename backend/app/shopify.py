@@ -5,6 +5,7 @@ Tokenul de acces se obține, în ordine:
   2. tokenul salvat în baza de date după instalarea aplicației (buton „Conectează Shopify”)
   3. client credentials (aplicație din Dev Dashboard, aceeași organizație cu magazinul)
 """
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -72,16 +73,25 @@ async def graphql(query: str, variables: dict | None = None) -> dict:
     if not shop or not token:
         raise RuntimeError("Shopify nu este conectat")
     url = f"https://{shop}/admin/api/{config.SHOPIFY_API_VERSION}/graphql.json"
-    async with httpx.AsyncClient(timeout=30) as cli:
-        r = await cli.post(url, json={"query": query, "variables": variables or {}},
-                           headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"})
-    if r.status_code == 401:
-        _cc_cache["token"] = None
-    r.raise_for_status()
-    data = r.json()
-    if data.get("errors"):
-        raise RuntimeError(f"Shopify: {str(data['errors'])[:300]}")
-    return data["data"]
+    for attempt in range(5):
+        async with httpx.AsyncClient(timeout=40) as cli:
+            r = await cli.post(url, json={"query": query, "variables": variables or {}},
+                               headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"})
+        if r.status_code == 401:
+            _cc_cache["token"] = None
+        if r.status_code in (429, 502, 503):
+            await asyncio.sleep(2 + attempt * 2)
+            continue
+        r.raise_for_status()
+        data = r.json()
+        errs = data.get("errors") or []
+        if errs and any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errs if isinstance(e, dict)):
+            await asyncio.sleep(2 + attempt * 2)
+            continue
+        if errs:
+            raise RuntimeError(f"Shopify: {str(errs)[:300]}")
+        return data["data"]
+    raise RuntimeError("Shopify: prea multe cereri, reîncearcă")
 
 
 ORDER_QUERY = """
@@ -97,6 +107,7 @@ query OrderLookup($q: String!) {
       lineItems(first: 100) { edges { node {
         id title variantTitle quantity sku
         product { id }
+        variant { id }
         originalUnitPriceSet { shopMoney { amount currencyCode } }
         image { url }
       } } }
@@ -118,6 +129,7 @@ def _normalize(node: dict) -> dict:
         items.append({
             "id": _tail(li.get("id")),
             "product_id": _tail((li.get("product") or {}).get("id")),
+            "variant_id": _tail((li.get("variant") or {}).get("id")),
             "title": li.get("title"),
             "variant_title": li.get("variantTitle"),
             "sku": li.get("sku"),

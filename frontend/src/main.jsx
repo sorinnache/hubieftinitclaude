@@ -11,6 +11,7 @@ import ReturnDetail from "./pages/ReturnDetail";
 import ServiceDetail from "./pages/ServiceDetail";
 import Settings from "./pages/Settings";
 import Activity from "./pages/Activity";
+import Stock from "./pages/Stock";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -34,6 +35,7 @@ function App() {
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
       <Route path="/service/:id" element={<Protected><ServiceDetail /></Protected>} />
+      <Route path="/stocuri" element={<Protected><Stock /></Protected>} />
       <Route path="/istoric" element={<Protected><Activity /></Protected>} />
       <Route path="/setari" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/retururi" replace />} />
