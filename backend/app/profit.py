@@ -224,6 +224,7 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
     packing = parcels * parcel_cost * k  # coletare (ambalare) — doar coletele trimise
     courier = (parcels + return_pickups) * shipping_cost * k  # livrare plătită curierului (+ ridicările de retur)
     ads_cost = ads_total * k
+    other = other * k  # „alte costuri” se introduc fără TVA
     total_costs = cogs + packing + courier + ads_cost + fixed + other
     pbt = revenue - total_costs
     regime = s["tax_regime"]

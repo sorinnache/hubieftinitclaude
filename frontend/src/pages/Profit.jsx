@@ -202,7 +202,7 @@ function MonthDetail({ period, onSaved }) {
           <Line label="Reclame" value={d.ads_total} neg
             sub={`Facebook ${money(d.ads.facebook)} · Google ${money(d.ads.google)} · TikTok ${money(d.ads.tiktok)}${d.roas ? ` · ROAS ${d.roas}` : ""}`} />
           <Line label="Costuri fixe lunare" value={d.fixed} neg sub={(d.fixed_list || []).map((c) => `${c.name} ${money(c.amount)}`).join(" · ") || "nesetate"} />
-          {d.other > 0 && <Line label="Alte costuri" value={d.other} neg sub={d.other_note} />}
+          {d.other > 0 && <Line label="Alte costuri" value={d.other} neg sub={[d.other_note, "fără TVA"].filter(Boolean).join(" · ")} />}
           <Line label="Profit înainte de impozit" value={d.profit_before_tax} strong neg={d.profit_before_tax < 0} />
           <Line label={d.tax_label} value={d.tax} neg />
           <Line label="Profit net rămas în firmă" value={d.net_profit} strong big neg={d.net_profit < 0} sub={`marjă netă ${d.margin}% din venituri`} />
@@ -238,7 +238,7 @@ function MonthDetail({ period, onSaved }) {
               ? <div className="text-xs text-slate-500">Se folosesc costurile fixe din setări: {money(d.fixed)}</div>
               : <FixedEditor list={f.fixed_costs} onChange={(l) => setF({ ...f, fixed_costs: l })} />}
           </div>
-          <Field label="Alte costuri în această lună (opțional)"><Input inputMode="decimal" value={f.other_costs} onChange={(e) => setF({ ...f, other_costs: e.target.value })} placeholder="0" /></Field>
+          <Field label="Alte costuri în această lună (opțional, fără TVA)"><Input inputMode="decimal" value={f.other_costs} onChange={(e) => setF({ ...f, other_costs: e.target.value })} placeholder="0" /></Field>
           {num(f.other_costs) > 0 && <Field label="Ce reprezintă"><Input value={f.other_note} onChange={(e) => setF({ ...f, other_note: e.target.value })} placeholder="ex. reparație, consultanță" /></Field>}
           <Button className="w-full" onClick={save} loading={busy} disabled={!dirty}>Salvează și recalculează</Button>
         </div>
