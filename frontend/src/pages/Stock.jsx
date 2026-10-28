@@ -43,6 +43,7 @@ export default function Stock() {
   const tab = tabs.find((t) => t.id === params.get("tab"))?.id || "stoc";
   const [summary, setSummary] = useState(null);
   const nav = useNavigate();
+  const [refresh, setRefresh] = useState(0); // după sincronizare reîncărcăm și lista din tab-ul deschis
   const loadSummary = () => api("/stock/summary").then(setSummary).catch(() => {});
   useEffect(() => { loadSummary(); }, [tab]);
 
@@ -60,7 +61,7 @@ export default function Stock() {
             </div>
           )}
         </div>
-        <SyncButton onDone={loadSummary} />
+        <SyncButton onDone={() => { loadSummary(); setRefresh((n) => n + 1); }} />
       </div>
       {summary?.last_error && <div className="mb-4 rounded-lg bg-amber-50 px-4 py-2.5 text-sm text-amber-800 ring-1 ring-amber-200">Ultima sincronizare Shopify a dat eroare ({fmtDateTime(summary.last_error_at)}): {summary.last_error}</div>}
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200">
@@ -71,12 +72,14 @@ export default function Stock() {
           </button>
         ))}
       </div>
+      <div key={refresh}>
       {tab === "stoc" && <StockList summary={summary} onChanged={loadSummary} goInventory={() => nav("/stocuri/inventar")} />}
       {tab === "inventar" && <Inventory summary={summary} onDone={loadSummary} />}
       {tab === "valoare" && <StockValue />}
       {tab === "intrari" && <Receipts />}
       {tab === "miscari" && <Movements />}
       {tab === "setari" && <StockSettings summary={summary} onSaved={setSummary} />}
+      </div>
     </div>
   );
 }
