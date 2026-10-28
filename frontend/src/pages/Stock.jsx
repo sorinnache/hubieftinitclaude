@@ -154,7 +154,7 @@ function StockList({ summary, onChanged, goInventory }) {
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Caută produs sau SKU…" className="pl-9" />
           </div>
           <Select value={view} onChange={(e) => setView(e.target.value)}>
-            <option value="active">Produse active</option>
+            <option value="active">Produse active + draft</option>
             <option value="reserved">Doar cu rezervări</option>
             <option value="negative">Disponibil sub zero</option>
             <option value="products">Doar produse (fără pachete)</option>

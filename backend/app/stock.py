@@ -30,6 +30,8 @@ router = APIRouter(prefix="/stock", tags=["Stocuri"])
 DEFAULT_CONFIRM_TAGS = ["confirmata"]
 DEFAULT_CANCEL_TAGS = ["anulata", "sms canceled 🔴", "voice canceled 🔴"]
 RESERVE_WINDOW_DAYS = 45
+# produsele care se văd în stocuri și se numără la inventar: active pe site + draft (nepromovate, dar pot fi în depozit)
+STOCK_STATUSES = {"$in": ["ACTIVE", "DRAFT"]}
 
 MOVEMENT_LABELS = {
     "inventar": "Inventar",
@@ -370,7 +372,7 @@ async def list_items(q: Optional[str] = None, view: str = "active", _: dict = De
     db = get_db()
     query: dict = {}
     if view == "active":
-        query = {"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True}}
+        query = {"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True}}
     elif view == "untracked":
         query = {"untracked": True, "deleted": {"$ne": True}}
     elif view == "all":
@@ -412,7 +414,7 @@ async def summary(_: dict = Depends(get_current_user)):
     total_on_hand = 0
     negative = 0
     count = 0
-    async for v in db.stock_variants.find({"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True},
+    async for v in db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
                                            **NOT_BUNDLE},
                                           {"_id": 0, "variant_id": 1, "on_hand": 1}):
         count += 1
@@ -680,7 +682,7 @@ def _inv_sort_key(v: dict):
 
 async def _inv_targets() -> list[dict]:
     db = get_db()
-    vs = await db.stock_variants.find({"status": "ACTIVE", "deleted": {"$ne": True}, "untracked": {"$ne": True},
+    vs = await db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
                                        **NOT_BUNDLE}, {"_id": 0}).to_list(20000)
     return sorted(vs, key=_inv_sort_key)
 
@@ -711,7 +713,7 @@ async def _session_view(sess: dict) -> dict:
         c = counts.get(vid)
         items.append({"variant_id": vid, "product_title": v.get("product_title"), "variant_title": v.get("variant_title"),
                       "sku": v.get("sku"), "image": v.get("image"), "location": v.get("location"),
-                      "counted": c["counted"] if c else None, "before": c.get("before") if c else None,
+                      "status": v.get("status"), "counted": c["counted"] if c else None, "before": c.get("before") if c else None,
                       "counted_by": c.get("by") if c else None, "counted_at": c.get("at") if c else None})
     done = sum(1 for i in items if i["counted"] is not None)
     return {"id": sess["id"], "status": sess["status"], "started_at": sess["started_at"],

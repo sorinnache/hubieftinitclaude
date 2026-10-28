@@ -99,6 +99,7 @@ export default function InventoryRun() {
               : <div className="mt-3 flex h-44 w-44 items-center justify-center rounded-2xl bg-slate-100 text-slate-300"><Package className="h-12 w-12" /></div>}
             <div className="mt-4 text-xl font-bold leading-snug">{item.product_title}</div>
             {item.variant_title && <div className="mt-1 text-lg font-semibold text-brand">{item.variant_title}</div>}
+            {item.status === "DRAFT" && <div className="mt-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-200">Draft — nu e activ pe site, dar poate fi în depozit</div>}
             <div className="mt-1 flex flex-wrap justify-center gap-x-3 text-sm text-slate-500">
               {item.sku && <span className="font-mono">SKU {item.sku}</span>}
               {item.location && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{item.location}</span>}
