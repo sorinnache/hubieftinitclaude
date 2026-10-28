@@ -341,14 +341,19 @@ function ItemModal({ vid, onClose, onChanged }) {
             {d.is_bundle && <div className="mt-3">
             {!bundle?.length && <p className="mb-2 text-xs font-medium text-amber-600">Adaugă produsele pe care le conține pachetul, cu cantitatea fiecăruia.</p>}
             {bundle?.map((c, i) => (
-              <div key={c.variant_id} className="mb-2 flex items-center gap-2">
-                <div className="min-w-0 flex-1 truncate text-sm">{productName(c)}</div>
-                <Input type="number" min={1} className="w-20" value={c.qty} onChange={(e) => setBundle(bundle.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+              <div key={c.variant_id} className="mb-2 flex items-center gap-3 rounded-lg bg-slate-50 p-2">
+                <Thumb src={c.image} />
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-sm font-medium">{productName(c)}</div>
+                  <div className="text-xs text-slate-500">{c.sku || "fără SKU"}</div>
+                </div>
+                <Input type="number" min={1} className="w-20 shrink-0 text-right" value={c.qty} onChange={(e) => setBundle(bundle.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+                <span className="shrink-0 text-xs text-slate-500">buc</span>
                 <button onClick={() => setBundle(bundle.filter((_, j) => j !== i))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
               </div>
             ))}
             <ProductPicker placeholder="Adaugă componentă…" exclude={[vid, ...(bundle || []).map((c) => c.variant_id)]}
-              onPick={(r) => setBundle([...(bundle || []), { variant_id: r.variant_id, qty: 1, product_title: r.product_title, variant_title: r.variant_title }])} />
+              onPick={(r) => setBundle([...(bundle || []), { variant_id: r.variant_id, qty: 1, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image }])} />
             <div className="mt-3 flex justify-end">
               <Button size="sm" onClick={saveBundle} disabled={JSON.stringify((bundle || []).map((c) => [c.variant_id, Number(c.qty)])) === JSON.stringify((d.bundle_components || []).map((c) => [c.variant_id, Number(c.qty)]))}>Salvează componentele</Button>
             </div>

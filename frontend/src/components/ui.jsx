@@ -28,7 +28,9 @@ export const inputCls =
   "w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-brand outline-none";
 
 export function Input({ className, ...p }) {
-  return <input {...p} className={cx(inputCls, "h-10", className)} />;
+  // o lățime dată explicit (ex. w-20) înlocuiește w-full
+  const base = /(^|\s)w-/.test(className || "") ? inputCls.replace("w-full ", "") : inputCls;
+  return <input {...p} className={cx(base, "h-10", className)} />;
 }
 export function Textarea({ className, ...p }) {
   return <textarea {...p} className={cx(inputCls, className)} />;
