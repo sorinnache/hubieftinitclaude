@@ -395,7 +395,8 @@ def _row(v: dict, reserved: dict) -> dict:
 @router.get("/items")
 async def list_items(q: Optional[str] = None, view: str = "active", _: dict = Depends(get_current_user)):
     db = get_db()
-    query: dict = {}
+    # produsele șterse din Shopify nu apar în niciun filtru
+    query: dict = {"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True}}
     if view == "active":
         query = {"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True}}
     elif view == "untracked":
