@@ -13,6 +13,7 @@ import Settings from "./pages/Settings";
 import Activity from "./pages/Activity";
 import Stock from "./pages/Stock";
 import InventoryRun from "./pages/InventoryRun";
+import Profit from "./pages/Profit";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -45,6 +46,7 @@ function App() {
       <Route path="/service/:id" element={<Protected><ServiceDetail /></Protected>} />
       <Route path="/stocuri/inventar" element={<ProtectedBare><InventoryRun /></ProtectedBare>} />
       <Route path="/stocuri" element={<Protected><Stock /></Protected>} />
+      <Route path="/profit" element={<Protected><Profit /></Protected>} />
       <Route path="/istoric" element={<Protected><Activity /></Protected>} />
       <Route path="/setari" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/retururi" replace />} />
