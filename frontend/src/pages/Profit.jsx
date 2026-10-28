@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { RefreshCw, AlertTriangle, Plus, Trash2, TrendingUp, TrendingDown, Settings2 } from "lucide-react";
+import { RefreshCw, AlertTriangle, Plus, Trash2, TrendingUp, TrendingDown, Settings2, ChevronLeft, ChevronRight, CalendarDays } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtAgo, money } from "../lib/format";
@@ -54,10 +54,30 @@ export default function Profit() {
       {s.last_error && <div className="mb-4 rounded-xl bg-amber-50 px-5 py-3 text-sm text-amber-800 ring-1 ring-amber-200">Ultima sincronizare a dat eroare: {s.last_error}</div>}
       {!s.parcel_cost && <div className="mb-4 rounded-xl bg-amber-50 px-5 py-3 text-sm text-amber-800 ring-1 ring-amber-200">Nu ai setat costul de coletare per colet. Apasă „Setări firmă”.</div>}
 
-      <MonthsTable months={sum.months} active={period} onPick={(p) => setParams({ luna: p })} />
+      <MonthPicker periods={sum.months.map((m) => m.period)} value={period} onChange={(p) => setParams({ luna: p })} />
       {period && <MonthDetail key={period} period={period} onSaved={load} />}
+      <div className="mb-2 mt-8 text-sm font-semibold text-slate-700">Toate lunile</div>
+      <MonthsTable months={sum.months} active={period} onPick={(p) => { setParams({ luna: p }); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
       {settingsOpen && <SettingsModal s={s} onClose={() => setSettingsOpen(false)} onSaved={() => { setSettingsOpen(false); load(); }} />}
     </div>
+  );
+}
+
+function MonthPicker({ periods, value, onChange }) {
+  const i = periods.indexOf(value);
+  const older = periods[i + 1], newer = periods[i - 1];
+  return (
+    <Card className="mb-4 flex flex-wrap items-center gap-3 p-3">
+      <div className="flex items-center gap-2 text-sm font-medium text-slate-600"><CalendarDays className="h-4 w-4" /> Luna verificată:</div>
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="sm" disabled={!older} onClick={() => onChange(older)} title="Luna anterioară"><ChevronLeft className="h-4 w-4" /></Button>
+        <Select value={value} onChange={(e) => onChange(e.target.value)} className="h-9 w-52 font-semibold">
+          {periods.map((p) => <option key={p} value={p}>{label(p)}</option>)}
+        </Select>
+        <Button variant="outline" size="sm" disabled={!newer} onClick={() => onChange(newer)} title="Luna următoare"><ChevronRight className="h-4 w-4" /></Button>
+      </div>
+      <div className="text-xs text-slate-500">Costurile cu reclamele le introduci în dreapta, pentru luna aleasă aici.</div>
+    </Card>
   );
 }
 
