@@ -35,7 +35,7 @@ export default function ServiceDetail() {
     <div>
       <PrintTitle title="Fișă service" number={item.service_number} />
       <DetailHeader
-        kind="service" item={item} number={item.service_number} statuses={statuses} onPatch={patch}
+        kind="service" item={item} onReload={load} number={item.service_number} statuses={statuses} onPatch={patch}
         backTo="/service" backLabel="Toate cererile de service"
         onRefreshOrder={async () => {
           try { setItem(await api(`/service/${id}/refresh-order`, { method: "POST" })); toast.success("Comanda a fost reîncărcată din Shopify"); }

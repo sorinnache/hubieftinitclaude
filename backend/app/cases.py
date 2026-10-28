@@ -106,6 +106,10 @@ class ReorderBody(BaseModel):
     order: list[str]
 
 
+class DeleteBody(BaseModel):
+    reason: str
+
+
 class NoteBody(BaseModel):
     body: str
 
@@ -210,7 +214,7 @@ def build_router(kind: str) -> APIRouter:
         cur = await db[k["statuses"]].find_one({"id": sid}, {"_id": 0})
         if not cur:
             raise HTTPException(404, "Status inexistent")
-        used = await db[k["coll"]].count_documents({"status_id": sid})
+        used = await db[k["coll"]].count_documents({"status_id": sid, "deleted": {"$ne": True}})
         if used:
             raise HTTPException(400, f"Statusul este folosit de {used} cereri și nu poate fi șters")
         if cur.get("is_default"):
@@ -230,10 +234,10 @@ def build_router(kind: str) -> APIRouter:
     # ---------- listă ----------
     @r.get("")
     async def list_items(q: Optional[str] = None, status_id: Optional[str] = None, priority: Optional[str] = None,
-                         type: Optional[str] = None, open_only: bool = False,
+                         type: Optional[str] = None, open_only: bool = False, deleted: bool = False,
                          _: dict = Depends(get_current_user)):
         db = get_db()
-        query: dict[str, Any] = {}
+        query: dict[str, Any] = {"deleted": True} if deleted else {"deleted": {"$ne": True}}
         statuses = await _status_map(kind)
         if status_id:
             query["status_id"] = status_id
@@ -276,8 +280,10 @@ def build_router(kind: str) -> APIRouter:
         statuses = await _status_map(kind)
         out = []
         for sid, s in statuses.items():
-            out.append({"status": s, "count": await db[k["coll"]].count_documents({"status_id": sid})})
-        return {"total": await db[k["coll"]].count_documents({}), "by_status": out}
+            out.append({"status": s, "count": await db[k["coll"]].count_documents(
+                {"status_id": sid, "deleted": {"$ne": True}})})
+        return {"total": await db[k["coll"]].count_documents({"deleted": {"$ne": True}}), "by_status": out,
+                "deleted": await db[k["coll"]].count_documents({"deleted": True})}
 
     # ---------- detalii ----------
     async def _get(item_id: str) -> dict:
@@ -356,6 +362,38 @@ def build_router(kind: str) -> APIRouter:
         if changes:
             await audit.log(resource_type=kind, resource_id=item_id, action="updated", actor=user,
                             details={"fields": {FIELD_LABELS.get(f, f): c for f, c in changes.items()}}, ip=ip)
+        return await detail(item_id, user)
+
+    # ---------- ștergere (numărul rămâne ocupat, istoricul se păstrează) ----------
+    @r.post("/{item_id}/delete")
+    async def delete_item(item_id: str, body: DeleteBody, request: Request, user: dict = Depends(get_current_user)):
+        db = get_db()
+        cur = await _get(item_id)
+        if cur.get("deleted"):
+            raise HTTPException(400, "Cererea este deja ștearsă")
+        if not body.reason.strip():
+            raise HTTPException(400, "Scrie motivul ștergerii")
+        if kind == "return" and await db.shipments.find_one(
+                {"ref_type": "return", "ref_id": item_id, "manual": {"$ne": True},
+                 "status": {"$in": ["created", "out_for_pickup"]}}):
+            raise HTTPException(400, "Returul are un curier GLS chemat. Anulează întâi AWB-ul, apoi șterge cererea.")
+        await db[k["coll"]].update_one({"id": item_id}, {"$set": {
+            "deleted": True, "deleted_at": now_iso(), "deleted_by": user["name"], "delete_reason": body.reason.strip(),
+            "updated_at": now_iso()}})
+        await audit.log(resource_type=kind, resource_id=item_id, action="deleted", actor=user,
+                        details={"reason": body.reason.strip(), "number": cur.get(k["num"])}, ip=audit.client_ip(request))
+        return {"ok": True}
+
+    @r.post("/{item_id}/restore")
+    async def restore_item(item_id: str, request: Request, user: dict = Depends(require_admin)):
+        db = get_db()
+        cur = await _get(item_id)
+        if not cur.get("deleted"):
+            raise HTTPException(400, "Cererea nu este ștearsă")
+        await db[k["coll"]].update_one({"id": item_id}, {"$set": {"deleted": False, "updated_at": now_iso()},
+                                                         "$unset": {"deleted_at": "", "deleted_by": "", "delete_reason": ""}})
+        await audit.log(resource_type=kind, resource_id=item_id, action="restored", actor=user,
+                        ip=audit.client_ip(request))
         return await detail(item_id, user)
 
     # ---------- note interne ----------

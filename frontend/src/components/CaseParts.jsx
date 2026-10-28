@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   ArrowLeft, Printer, RefreshCw, Phone, Mail, ExternalLink, Download, Upload, FileText, Play, MessageSquare,
-  History as HistoryIcon, Pencil, ShieldCheck,
+  History as HistoryIcon, Pencil, ShieldCheck, Trash2, RotateCcw,
 } from "lucide-react";
+import { useAuth } from "../lib/auth";
 import { api, fileUrl } from "../lib/api";
 import { fmtDateTime, money, PRIORITIES } from "../lib/format";
 import { Button, Card, Empty, Field, Input, Modal, Select, StatusBadge, Textarea, cx, useToast } from "./ui";
@@ -14,8 +15,29 @@ export function useUsers() {
   return users;
 }
 
-export function DetailHeader({ kind, item, number, statuses, onPatch, onRefreshOrder, backTo, backLabel }) {
+export function DetailHeader({ kind, item, number, statuses, onPatch, onRefreshOrder, backTo, backLabel, onReload }) {
   const users = useUsers();
+  const toast = useToast();
+  const nav = useNavigate();
+  const { isAdmin } = useAuth();
+  const [del, setDel] = useState(false);
+  const [preset, setPreset] = useState("");
+  const [other, setOther] = useState("");
+  const reason = preset === "__other" ? other : preset;
+  const [busy, setBusy] = useState(false);
+  const base = kind === "return" ? "returns" : "service";
+  const doDelete = async () => {
+    setBusy(true);
+    try {
+      await api(`/${base}/${item.id}/delete`, { method: "POST", body: { reason } });
+      toast.success(`${number} a fost ștearsă`);
+      nav(backTo);
+    } catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  const doRestore = async () => {
+    try { await api(`/${base}/${item.id}/restore`, { method: "POST" }); toast.success("Cerere restaurată"); onReload?.(); }
+    catch (e) { toast.error(e.message); }
+  };
   return (
     <div className="mb-6">
       <Link to={backTo} className="no-print mb-3 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-800">
@@ -40,8 +62,39 @@ export function DetailHeader({ kind, item, number, statuses, onPatch, onRefreshO
           <Button variant="outline" onClick={() => window.print()}>
             <Printer className="h-4 w-4" /> Printează fișa
           </Button>
+          {!item.deleted && (
+            <Button variant="danger" onClick={() => { setPreset(""); setOther(""); setDel(true); }}>
+              <Trash2 className="h-4 w-4" /> Șterge
+            </Button>
+          )}
         </div>
       </div>
+      {item.deleted && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800 ring-1 ring-red-200">
+          <div>
+            <strong>Cerere ștearsă</strong> de {item.deleted_by} la {fmtDateTime(item.deleted_at)}. Motiv: {item.delete_reason}
+            <div className="text-xs text-red-700/80">Numărul {number} rămâne ocupat și nu se mai alocă altei cereri.</div>
+          </div>
+          {isAdmin && <Button size="sm" variant="outline" onClick={doRestore}><RotateCcw className="h-3.5 w-3.5" /> Restaurează</Button>}
+        </div>
+      )}
+      <Modal open={del} onClose={() => setDel(false)} title={`Șterge ${number}`}
+        footer={<><Button variant="outline" onClick={() => setDel(false)}>Renunță</Button>
+          <Button variant="primary" className="bg-red-600 hover:bg-red-700" loading={busy} disabled={!reason.trim()} onClick={doDelete}><Trash2 className="h-4 w-4" /> Șterge cererea</Button></>}>
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">Cererea dispare din liste. Numărul <strong>{number}</strong> rămâne ocupat, iar istoricul complet se păstrează. Un administrator o poate restaura din filtrul „Cereri șterse”.</p>
+          <Field label="Motivul ștergerii *">
+            <Select value={preset} onChange={(e) => setPreset(e.target.value)}>
+              <option value="">Alege motivul</option>
+              <option>Cerere duplicată</option>
+              <option>Cerere de test</option>
+              <option>Trimisă din greșeală de client</option>
+              <option value="__other">Alt motiv…</option>
+            </Select>
+          </Field>
+          {preset === "__other" && <Field label="Scrie motivul"><Input autoFocus value={other} onChange={(e) => setOther(e.target.value)} /></Field>}
+        </div>
+      </Modal>
       <Card className="no-print mt-5 p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Status">
@@ -287,6 +340,10 @@ export function describe(h) {
       return { title: "Datele comenzii reîncărcate din Shopify" };
     case "stock_restocked":
       return { title: "Produsele au fost readăugate în stoc", body: d.skipped?.length ? `Nu s-au putut identifica: ${d.skipped.join(", ")}` : null };
+    case "deleted":
+      return { title: "Cerere ștearsă", body: d.reason ? `Motiv: ${d.reason}` : null, tone: "error" };
+    case "restored":
+      return { title: "Cerere restaurată" };
     case "legacy_event":
       return { title: d.text || "Eveniment" };
     default:

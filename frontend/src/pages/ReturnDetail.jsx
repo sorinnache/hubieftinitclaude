@@ -40,7 +40,7 @@ export default function ReturnDetail() {
     <div>
       <PrintTitle title="Fișă retur" number={item.return_number} />
       <DetailHeader
-        kind="return" item={item} number={item.return_number} statuses={statuses} onPatch={patch}
+        kind="return" item={item} onReload={load} number={item.return_number} statuses={statuses} onPatch={patch}
         backTo="/retururi" backLabel="Toate retururile"
         onRefreshOrder={async () => {
           try { setItem(await api(`/returns/${id}/refresh-order`, { method: "POST" })); toast.success("Comanda a fost reîncărcată din Shopify"); }

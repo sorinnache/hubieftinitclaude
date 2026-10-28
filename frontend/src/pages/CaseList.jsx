@@ -42,7 +42,8 @@ export default function CaseList({ kind }) {
   const fetchItems = useCallback(async () => {
     const p = new URLSearchParams();
     if (q.trim()) p.set("q", q.trim());
-    if (status) p.set("status_id", status);
+    if (status === "__deleted") p.set("deleted", "true");
+    else if (status) p.set("status_id", status);
     if (type) p.set("type", type);
     if (priority) p.set("priority", priority);
     if (openOnly) p.set("open_only", "true");
@@ -115,6 +116,7 @@ export default function CaseList({ kind }) {
           <Select value={status} onChange={(e) => setStatus(e.target.value)} className="md:w-44">
             <option value="">Toate statusurile</option>
             {statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            <option value="__deleted">— Cereri șterse —</option>
           </Select>
           <Select value={type} onChange={(e) => setType(e.target.value)} className="md:w-44">
             {kind === "return" ? (
