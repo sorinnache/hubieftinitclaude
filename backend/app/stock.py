@@ -278,10 +278,21 @@ async def sync_loop():
         await asyncio.sleep(180)
 
 
+DEFAULT_RESERVE_DAYS = 30
+
+
+async def _reserve_query() -> dict:
+    """Doar comenzile confirmate, neexpediate și mai noi de N zile (implicit 30) rezervă stoc."""
+    s = await get_settings()
+    days = int(s.get("reserve_days") or DEFAULT_RESERVE_DAYS)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"reserving": True, "created_at": {"$gte": since}}
+
+
 async def reserved_map() -> dict[str, dict]:
     """variant_id -> {qty, orders:[...]} din comenzile confirmate neexpediate."""
     out: dict[str, dict] = {}
-    async for o in get_db().stock_orders.find({"reserving": True}, {"_id": 0}):
+    async for o in get_db().stock_orders.find(await _reserve_query(), {"_id": 0}):
         for l in o["lines"]:
             if not l["unfulfilled"]:
                 continue
@@ -401,7 +412,8 @@ async def summary(_: dict = Depends(get_current_user)):
         "started": bool(s.get("start_at")), "start_at": s.get("start_at"),
         "variants": count, "units_on_hand": total_on_hand,
         "units_reserved": sum(r["qty"] for r in reserved.values()),
-        "reserving_orders": await db.stock_orders.count_documents({"reserving": True}),
+        "reserving_orders": await db.stock_orders.count_documents(await _reserve_query()),
+        "reserve_days": int(s.get("reserve_days") or DEFAULT_RESERVE_DAYS),
         "negative": negative, "last_order_sync": s.get("last_order_sync"),
         "last_product_sync": s.get("last_product_sync"), "last_error": s.get("last_error"),
         "last_error_at": s.get("last_error_at"),
@@ -590,6 +602,7 @@ async def set_meta(vid: str, body: ItemMeta, _: dict = Depends(get_current_user)
 class StockSettings(BaseModel):
     confirm_tags: list[str]
     cancel_tags: list[str]
+    reserve_days: int = Field(default=30, ge=1, le=365)
 
 
 @router.put("/settings")
@@ -597,7 +610,8 @@ async def save_settings(body: StockSettings, request: Request, user: dict = Depe
     ct = [t.strip() for t in body.confirm_tags if t.strip()]
     if not ct:
         raise HTTPException(400, "Trebuie cel puțin un tag de confirmare")
-    await _set_settings(confirm_tags=ct, cancel_tags=[t.strip() for t in body.cancel_tags if t.strip()])
+    await _set_settings(confirm_tags=ct, cancel_tags=[t.strip() for t in body.cancel_tags if t.strip()],
+                        reserve_days=body.reserve_days)
     # recalculăm rezervările pentru comenzile cunoscute
     s = await get_settings()
     confirm = {_norm(t) for t in s["confirm_tags"]}

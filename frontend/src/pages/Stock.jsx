@@ -53,6 +53,7 @@ export default function Stock() {
           {summary && (
             <div className="mt-1 text-sm text-slate-500">
               {summary.started ? `Urmărire pornită ${fmtDateTime(summary.start_at)}` : "Urmărirea pornește după primul inventar"}
+              {` · rezervări din ultimele ${summary.reserve_days || 30} de zile`}
               {summary.last_order_sync && ` · comenzi sincronizate ${fmtAgo(summary.last_order_sync)}`}
             </div>
           )}
@@ -524,7 +525,7 @@ function Movements() {
 function StockSettings({ summary, onSaved }) {
   const toast = useToast();
   const [f, setF] = useState(null);
-  useEffect(() => { if (summary) setF({ confirm: summary.confirm_tags.join("\n"), cancel: summary.cancel_tags.join("\n") }); }, [summary]);
+  useEffect(() => { if (summary) setF({ confirm: summary.confirm_tags.join("\n"), cancel: summary.cancel_tags.join("\n"), days: summary.reserve_days || 30 }); }, [summary]);
   if (!f) return <PageLoader />;
   const split = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
   return (
@@ -533,12 +534,15 @@ function StockSettings({ summary, onSaved }) {
         <Field label="Taguri care înseamnă „comandă confirmată” (unul pe rând)" hint="O comandă cu oricare dintre aceste taguri rezervă stoc până la emiterea AWB-ului. Literele mari/mici și diacriticele nu contează.">
           <Textarea rows={4} value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} />
         </Field>
+        <Field label="Câte zile în urmă se iau în calcul comenzile pentru rezervare" hint="Comenzile confirmate mai vechi de atât nu mai rezervă stoc (sunt considerate abandonate).">
+          <Input type="number" min={1} max={365} className="w-32" value={f.days} onChange={(e) => setF({ ...f, days: e.target.value })} />
+        </Field>
         <Field label="Taguri care înseamnă „comandă anulată” (unul pe rând)" hint="O comandă cu oricare dintre aceste taguri nu mai rezervă stoc, chiar dacă fusese confirmată.">
           <Textarea rows={4} value={f.cancel} onChange={(e) => setF({ ...f, cancel: e.target.value })} />
         </Field>
         <div className="flex justify-end">
           <Button onClick={async () => {
-            try { onSaved(await api("/stock/settings", { method: "PUT", body: { confirm_tags: split(f.confirm), cancel_tags: split(f.cancel) } })); toast.success("Reguli salvate, rezervările au fost recalculate"); }
+            try { onSaved(await api("/stock/settings", { method: "PUT", body: { confirm_tags: split(f.confirm), cancel_tags: split(f.cancel), reserve_days: Number(f.days) || 30 } })); toast.success("Reguli salvate, rezervările au fost recalculate"); }
             catch (e) { toast.error(e.message); }
           }}>Salvează</Button>
         </div>
