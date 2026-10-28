@@ -59,9 +59,16 @@ async def run_import(path: Path, overwrite: bool = False, progress=None) -> dict
 
     async def import_files(kind: str, case: dict):
         for f in case.get("files") or []:
-            if await db.files.find_one({"id": f["id"]}, {"_id": 1}):
-                continue
             blob = files_blob.get(f["id"])
+            existing = await db.files.find_one({"id": f["id"]}, {"_id": 0, "id": 1, "missing": 1})
+            if existing is not None:
+                # completează fișierele care lipseau la un import anterior
+                if existing.get("missing") and blob:
+                    raw, ct = _decode_data_url(blob)
+                    saved = storage.save_bytes(f["id"], raw, f.get("content_type") or ct, f.get("original_filename"))
+                    await db.files.update_one({"id": f["id"]}, {"$set": {**saved, "missing": False}})
+                    stats["files"] += 1
+                continue
             rec = {"id": f["id"], "ref_type": kind, "ref_id": case["id"], "original_filename": f.get("original_filename"),
                    "source": "client", "created_at": f.get("created_at") or now_iso(), "imported": True}
             if blob:
