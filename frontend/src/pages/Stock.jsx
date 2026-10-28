@@ -210,7 +210,7 @@ function StockList({ summary, onChanged, goInventory }) {
                     {r.is_bundle ? (
                       <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-slate-500">
                         {r.bundle?.length
-                          ? <>se pot face <strong className="text-slate-900">{r.bundle_available ?? 0}</strong> pachete din stoc</>
+                          ? <>se pot face <strong className="text-slate-900">{Math.max(0, r.bundle_available ?? 0)}</strong> pachete din stoc</>
                           : <span className="font-medium text-amber-600">componente nesetate — click ca să le adaugi</span>}
                       </td>
                     ) : (
