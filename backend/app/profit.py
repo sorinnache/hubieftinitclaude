@@ -30,7 +30,7 @@ DEFAULTS = {
     "vat_payer": True, "vat_rate": 21.0,
     "tax_regime": "profit",  # profit | micro | none
     "profit_tax_rate": 16.0, "micro_rate": 1.0,
-    "parcel_cost": 0.0, "include_return_pickups": True,
+    "parcel_cost": 0.0, "shipping_cost": 0.0, "include_return_pickups": True,
     "fixed_costs": [],  # [{name, amount}]
     "backfill_from": "2026-01",
 }
@@ -152,7 +152,7 @@ def _month_bounds(period: str) -> tuple[str, str]:
 async def _month_inputs(period: str) -> dict:
     doc = await get_db().profit_months.find_one({"period": period}, {"_id": 0}) or {}
     return {"ads_facebook": 0.0, "ads_google": 0.0, "ads_tiktok": 0.0, "other_costs": 0.0, "other_note": "",
-            "parcel_cost": None, "fixed_costs": None, **doc}
+            "parcel_cost": None, "shipping_cost": None, "fixed_costs": None, **doc}
 
 
 async def compute(period: str, settings: Optional[dict] = None, detail: bool = False) -> dict:
@@ -208,6 +208,7 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
                 return_pickups += 1
 
     parcel_cost = float(inp["parcel_cost"] if inp["parcel_cost"] is not None else s["parcel_cost"])
+    shipping_cost = float(inp["shipping_cost"] if inp.get("shipping_cost") is not None else s.get("shipping_cost") or 0)
     fixed_list = inp["fixed_costs"] if inp["fixed_costs"] is not None else s["fixed_costs"]
     fixed = sum(float(f.get("amount") or 0) for f in fixed_list)
     ads = {"facebook": float(inp["ads_facebook"] or 0), "google": float(inp["ads_google"] or 0),
@@ -220,9 +221,10 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
     vat_collected = gross - revenue if payer else 0.0
     k = 1.0 if payer else (1 + vat)  # neplătitor: TVA-ul de la furnizori devine cost
     cogs = cogs_net * k
-    courier = (parcels + return_pickups) * parcel_cost * k
+    packing = parcels * parcel_cost * k  # coletare (ambalare) — doar coletele trimise
+    courier = (parcels + return_pickups) * shipping_cost * k  # livrare plătită curierului (+ ridicările de retur)
     ads_cost = ads_total * k
-    total_costs = cogs + courier + ads_cost + fixed + other
+    total_costs = cogs + packing + courier + ads_cost + fixed + other
     pbt = revenue - total_costs
     regime = s["tax_regime"]
     if regime == "profit":
@@ -239,7 +241,8 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
         "period": period, "gross_sales": r2(gross), "revenue": r2(revenue), "vat_collected": r2(vat_collected),
         "orders_delivered": orders_delivered, "orders_placed": placed, "aov": r2(gross / orders_delivered) if orders_delivered else 0,
         "parcels": parcels, "shipped_orders": shipped_orders, "return_pickups": return_pickups,
-        "parcel_cost": parcel_cost, "cogs": r2(cogs), "courier": r2(courier), "ads": {k2: r2(v * k) for k2, v in ads.items()},
+        "parcel_cost": parcel_cost, "shipping_cost": shipping_cost, "cogs": r2(cogs), "packing": r2(packing),
+        "courier": r2(courier), "ads": {k2: r2(v * k) for k2, v in ads.items()},
         "ads_total": r2(ads_cost), "fixed": r2(fixed), "fixed_list": fixed_list, "other": r2(other),
         "other_note": inp.get("other_note") or "", "total_costs": r2(total_costs), "profit_before_tax": r2(pbt),
         "tax": r2(tax), "tax_label": tax_label, "net_profit": r2(net),
@@ -247,7 +250,7 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
         "roas": r2(gross / ads_total) if ads_total else None,
         "missing_cost": sorted(missing.values(), key=lambda m: -m["qty"]),
         "inputs": {k2: inp.get(k2) for k2 in ("ads_facebook", "ads_google", "ads_tiktok", "other_costs", "other_note",
-                                              "parcel_cost", "fixed_costs")},
+                                              "parcel_cost", "shipping_cost", "fixed_costs")},
         "vat_payer": payer,
     }
     return out
@@ -296,6 +299,7 @@ class MonthInputs(BaseModel):
     other_costs: float = Field(default=0, ge=0)
     other_note: str = ""
     parcel_cost: Optional[float] = Field(default=None, ge=0)
+    shipping_cost: Optional[float] = Field(default=None, ge=0)
     fixed_costs: Optional[list[FixedCost]] = None
 
 
@@ -318,6 +322,7 @@ class ProfitSettings(BaseModel):
     profit_tax_rate: float = Field(ge=0, le=50)
     micro_rate: float = Field(ge=0, le=10)
     parcel_cost: float = Field(ge=0)
+    shipping_cost: float = Field(default=0, ge=0)
     include_return_pickups: bool = True
     fixed_costs: list[FixedCost] = []
     backfill_from: str

@@ -52,7 +52,7 @@ export default function Profit() {
         </div>
       )}
       {s.last_error && <div className="mb-4 rounded-xl bg-amber-50 px-5 py-3 text-sm text-amber-800 ring-1 ring-amber-200">Ultima sincronizare a dat eroare: {s.last_error}</div>}
-      {!s.parcel_cost && <div className="mb-4 rounded-xl bg-amber-50 px-5 py-3 text-sm text-amber-800 ring-1 ring-amber-200">Nu ai setat costul de coletare per colet. Apasă „Setări firmă”.</div>}
+      {!s.shipping_cost && <div className="mb-4 rounded-xl bg-amber-50 px-5 py-3 text-sm text-amber-800 ring-1 ring-amber-200">Nu ai setat costul implicit de livrare curier per colet. Apasă „Setări firmă” sau completează-l pe fiecare lună.</div>}
 
       <MonthPicker periods={sum.months.map((m) => m.period)} value={period} onChange={(p) => setParams({ luna: p })} />
       {period && <MonthDetail key={period} period={period} onSaved={load} />}
@@ -155,17 +155,17 @@ function MonthDetail({ period, onSaved }) {
     setF({
       ads_facebook: x.inputs.ads_facebook || "", ads_google: x.inputs.ads_google || "", ads_tiktok: x.inputs.ads_tiktok || "",
       other_costs: x.inputs.other_costs || "", other_note: x.inputs.other_note || "",
-      parcel_cost: x.inputs.parcel_cost ?? "",
+      parcel_cost: x.inputs.parcel_cost ?? "", shipping_cost: x.inputs.shipping_cost ?? "",
       fixed_costs: x.inputs.fixed_costs, // null = cele implicite din setări
     });
   }).catch((e) => toast.error(e.message));
   useEffect(() => { load(); }, [period]); // eslint-disable-line
   const dirty = useMemo(() => d && f && JSON.stringify({
     a: num(f.ads_facebook), b: num(f.ads_google), c: num(f.ads_tiktok), o: num(f.other_costs), n: f.other_note,
-    p: f.parcel_cost === "" ? null : num(f.parcel_cost), x: f.fixed_costs,
+    p: f.parcel_cost === "" ? null : num(f.parcel_cost), sh: f.shipping_cost === "" ? null : num(f.shipping_cost), x: f.fixed_costs,
   }) !== JSON.stringify({
     a: num(d.inputs.ads_facebook), b: num(d.inputs.ads_google), c: num(d.inputs.ads_tiktok), o: num(d.inputs.other_costs), n: d.inputs.other_note || "",
-    p: d.inputs.parcel_cost ?? null, x: d.inputs.fixed_costs,
+    p: d.inputs.parcel_cost ?? null, sh: d.inputs.shipping_cost ?? null, x: d.inputs.fixed_costs,
   }), [d, f]);
   const save = async () => {
     setBusy(true);
@@ -174,6 +174,7 @@ function MonthDetail({ period, onSaved }) {
         ads_facebook: num(f.ads_facebook), ads_google: num(f.ads_google), ads_tiktok: num(f.ads_tiktok),
         other_costs: num(f.other_costs), other_note: f.other_note,
         parcel_cost: f.parcel_cost === "" ? null : num(f.parcel_cost),
+        shipping_cost: f.shipping_cost === "" ? null : num(f.shipping_cost),
         fixed_costs: f.fixed_costs ? f.fixed_costs.map((c) => ({ name: c.name, amount: num(c.amount) })) : null,
       } });
       setD(x); toast.success("Salvat"); onSaved?.();
@@ -195,8 +196,9 @@ function MonthDetail({ period, onSaved }) {
           {d.vat_payer && <Line label={`TVA colectat`} value={d.vat_collected} neg sub="se plătește la stat" />}
           <Line label={d.vat_payer ? "Venituri fără TVA" : "Venituri"} value={d.revenue} strong />
           <Line label="Cost marfă vândută (COGS)" value={d.cogs} neg sub={`din costurile setate în Shopify, fără TVA${k}`} />
-          <Line label="Coletare" value={d.courier} neg
-            sub={`${d.parcels} colete trimise pentru comenzile plasate în lună (${d.shipped_orders} comenzi, inclusiv cele refuzate)${d.return_pickups ? ` + ${d.return_pickups} ridicări retur` : ""} × ${money(d.parcel_cost)}${k}`} />
+          <Line label="Livrare curier" value={d.courier} neg
+            sub={`${d.parcels} colete trimise pentru comenzile plasate în lună (inclusiv cele refuzate)${d.return_pickups ? ` + ${d.return_pickups} ridicări retur` : ""} × ${money(d.shipping_cost)}${k}`} />
+          <Line label="Coletare (ambalare)" value={d.packing} neg sub={`${d.parcels} colete × ${money(d.parcel_cost)}${k}`} />
           <Line label="Reclame" value={d.ads_total} neg
             sub={`Facebook ${money(d.ads.facebook)} · Google ${money(d.ads.google)} · TikTok ${money(d.ads.tiktok)}${d.roas ? ` · ROAS ${d.roas}` : ""}`} />
           <Line label="Costuri fixe lunare" value={d.fixed} neg sub={(d.fixed_list || []).map((c) => `${c.name} ${money(c.amount)}`).join(" · ") || "nesetate"} />
@@ -223,7 +225,8 @@ function MonthDetail({ period, onSaved }) {
           <Field label="Reclame Facebook / Meta"><Input inputMode="decimal" value={f.ads_facebook} onChange={(e) => setF({ ...f, ads_facebook: e.target.value })} placeholder="0" /></Field>
           <Field label="Reclame Google"><Input inputMode="decimal" value={f.ads_google} onChange={(e) => setF({ ...f, ads_google: e.target.value })} placeholder="0" /></Field>
           <Field label="Reclame TikTok"><Input inputMode="decimal" value={f.ads_tiktok} onChange={(e) => setF({ ...f, ads_tiktok: e.target.value })} placeholder="0" /></Field>
-          <Field label="Cost coletare per colet în această lună"><Input inputMode="decimal" value={f.parcel_cost} onChange={(e) => setF({ ...f, parcel_cost: e.target.value })} placeholder={`implicit din setări (${d.parcel_cost} lei)`} /></Field>
+          <Field label="Cost mediu livrare curier per colet în această lună"><Input inputMode="decimal" value={f.shipping_cost} onChange={(e) => setF({ ...f, shipping_cost: e.target.value })} placeholder={`implicit din setări (${d.shipping_cost} lei)`} /></Field>
+          <Field label="Cost coletare (ambalare) per colet în această lună"><Input inputMode="decimal" value={f.parcel_cost} onChange={(e) => setF({ ...f, parcel_cost: e.target.value })} placeholder={`implicit din setări (${d.parcel_cost} lei)`} /></Field>
           <div>
             <div className="mb-1 flex items-center justify-between text-sm font-medium text-slate-700">
               <span>Costuri fixe în această lună</span>
@@ -269,7 +272,7 @@ function SettingsModal({ s, onClose, onSaved }) {
     try {
       await api("/profit/settings", { method: "PUT", body: {
         vat_payer: f.vat_payer, vat_rate: num(f.vat_rate), tax_regime: f.tax_regime, profit_tax_rate: num(f.profit_tax_rate),
-        micro_rate: num(f.micro_rate), parcel_cost: num(f.parcel_cost), include_return_pickups: f.include_return_pickups,
+        micro_rate: num(f.micro_rate), parcel_cost: num(f.parcel_cost), shipping_cost: num(f.shipping_cost), include_return_pickups: f.include_return_pickups,
         fixed_costs: f.fixed_costs.filter((c) => c.name.trim()).map((c) => ({ name: c.name.trim(), amount: num(c.amount) })),
         backfill_from: f.backfill_from,
       } });
@@ -304,11 +307,14 @@ function SettingsModal({ s, onClose, onSaved }) {
           <div className="mt-2 text-xs text-slate-500">Impozitul pe profit se calculează lunar, doar pe lunile cu profit (estimare; declarația oficială o face contabilul).</div>
         </div>
         <div className="rounded-xl p-4 ring-1 ring-slate-200">
-          <div className="w-56"><Field label="Cost coletare per colet (lei, fără TVA)"><Input inputMode="decimal" value={f.parcel_cost} onChange={(e) => setF({ ...f, parcel_cost: e.target.value })} /></Field></div>
-          <div className="mt-1 text-xs text-slate-500">Se înmulțește cu toate coletele trimise în lună (comenzi Fulfilled), inclusiv cele refuzate de clienți. Îl poți schimba pe o anumită lună din pagina lunii.</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Cost mediu livrare curier per colet (lei, fără TVA)"><Input inputMode="decimal" value={f.shipping_cost ?? ""} onChange={(e) => setF({ ...f, shipping_cost: e.target.value })} /></Field>
+            <Field label="Cost coletare / ambalare per colet (lei, fără TVA)"><Input inputMode="decimal" value={f.parcel_cost} onChange={(e) => setF({ ...f, parcel_cost: e.target.value })} /></Field>
+          </div>
+          <div className="mt-1 text-xs text-slate-500">Ambele se înmulțesc cu toate coletele trimise (comenzi Fulfilled), inclusiv cele refuzate de clienți. Sunt valorile implicite; pe fiecare lună le poți schimba din pagina lunii.</div>
           <label className="mt-3 flex items-start gap-2">
             <input type="checkbox" className="mt-0.5 h-4 w-4 accent-brand" checked={f.include_return_pickups} onChange={(e) => setF({ ...f, include_return_pickups: e.target.checked })} />
-            <span>Adaugă și ridicările de retur chemate din hub (curier la client)</span>
+            <span>Adaugă la livrare și ridicările de retur chemate din hub (curier la client)</span>
           </label>
         </div>
         <div className="rounded-xl p-4 ring-1 ring-slate-200">
