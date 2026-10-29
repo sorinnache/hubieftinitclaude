@@ -35,15 +35,20 @@ DEFAULTS = {
     "backfill_from": "2026-01",
 }
 
+# v2: + AWB-uri, adresă (județ/telefon), valoarea inițială și cantitățile inițiale (pentru Analiza livrări —
+# comenzile refuzate sunt de obicei anulate/rambursate, iar valoarea „curentă” ajunge la 0).
+QUERY_VERSION = 2
 ORDERS_QUERY = """
 query P($q: String!, $after: String) {
-  orders(first: 40, after: $after, query: $q, sortKey: UPDATED_AT) {
+  orders(first: 25, after: $after, query: $q, sortKey: UPDATED_AT) {
     pageInfo { hasNextPage endCursor }
     nodes {
       id name createdAt updatedAt cancelledAt test
       currentTotalPriceSet { shopMoney { amount } }
-      lineItems(first: 15) { nodes { name sku currentQuantity variant { id } } }
-      fulfillments(first: 4) { createdAt status displayStatus deliveredAt }
+      totalPriceSet { shopMoney { amount } }
+      shippingAddress { name phone city province provinceCode }
+      lineItems(first: 15) { nodes { name title sku quantity currentQuantity variant { id } } }
+      fulfillments(first: 4) { createdAt status displayStatus deliveredAt trackingInfo(first: 2) { number } }
     }
   }
 }
@@ -72,14 +77,27 @@ async def _save(node: dict):
             continue
         lines.append({"variant_id": _tail((li.get("variant") or {}).get("id")), "qty": q,
                       "name": li.get("name") or "", "sku": li.get("sku") or ""})
+    items = []  # cantitățile inițiale (rămân și după anularea/rambursarea comenzii)
+    for li in (node.get("lineItems") or {}).get("nodes") or []:
+        q = int(li.get("quantity") or 0)
+        if q > 0:
+            items.append({"variant_id": _tail((li.get("variant") or {}).get("id")), "qty": q,
+                          "title": li.get("title") or li.get("name") or "", "name": li.get("name") or "",
+                          "sku": li.get("sku") or ""})
     fuls = [{"created_at": f.get("createdAt"), "status": f.get("status"), "display": f.get("displayStatus"),
-             "delivered_at": f.get("deliveredAt")} for f in node.get("fulfillments") or []]
+             "delivered_at": f.get("deliveredAt"),
+             "awbs": [str(t["number"]).strip() for t in (f.get("trackingInfo") or []) if t and t.get("number")]}
+            for f in node.get("fulfillments") or []]
     delivered = sorted(f["delivered_at"] for f in fuls if f["delivered_at"] and (f["display"] == "DELIVERED"))
+    ship = node.get("shippingAddress") or {}
     await get_db().profit_orders.update_one({"order_id": _tail(node["id"])}, {"$set": {
         "order_id": _tail(node["id"]), "name": node["name"], "created_at": node.get("createdAt"),
         "updated_at": node.get("updatedAt"), "cancelled": bool(node.get("cancelledAt")), "test": bool(node.get("test")),
         "total": float(((node.get("currentTotalPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0),
-        "lines": lines, "fulfillments": fuls, "delivered_at": delivered[0] if delivered else None,
+        "total_original": float(((node.get("totalPriceSet") or {}).get("shopMoney") or {}).get("amount") or 0),
+        "lines": lines, "items": items, "fulfillments": fuls, "delivered_at": delivered[0] if delivered else None,
+        "ship": {"name": ship.get("name") or "", "phone": ship.get("phone") or "", "city": ship.get("city") or "",
+                 "county": ship.get("province") or ship.get("provinceCode") or ""},
         "synced_at": now_iso(),
     }}, upsert=True)
 
@@ -107,11 +125,14 @@ async def sync(full_recent: bool = False) -> dict:
         s = await get_settings()
         now = datetime.now(timezone.utc)
         out = {}
-        if not s.get("backfill_done_from") or s.get("backfill_done_from") != s["backfill_from"]:
+        # o versiune nouă a interogării (câmpuri noi) => se aduc din nou toate comenzile, o singură dată
+        if not s.get("backfill_done_from") or s.get("backfill_done_from") != s["backfill_from"] \
+                or s.get("query_version") != QUERY_VERSION:
             since = f"{s['backfill_from']}-01T00:00:00+02:00"
             await _set(backfill_running=True, backfill_count=0, backfill_started=now_iso())
             out["backfill"] = await _fetch(f"created_at:>='{since}'", "backfill_count")
             await _set(backfill_running=False, backfill_done_from=s["backfill_from"], backfill_done_at=now_iso(),
+                       query_version=QUERY_VERSION,
                        cursor=now.strftime("%Y-%m-%dT%H:%M:%SZ"), last_recent=now_iso())
             return out
         cursor = s.get("cursor") or now.strftime("%Y-%m-%dT%H:%M:%SZ")

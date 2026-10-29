@@ -59,3 +59,4 @@ async def ensure_indexes():
     await db.profit_orders.create_index("created_at")
     await db.profit_orders.create_index("fulfillments.created_at")
     await db.profit_months.create_index("period", unique=True)
+    await db.delivery_tracking.create_index("awb", unique=True)

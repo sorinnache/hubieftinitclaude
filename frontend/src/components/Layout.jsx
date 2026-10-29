@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp } from "lucide-react";
+import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp, Truck } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import { cx } from "./ui";
@@ -59,6 +59,7 @@ export default function Layout({ children }) {
         <NavItem to="/service" icon={Wrench} count={counts.service}>Service & schimb</NavItem>
         <NavItem to="/stocuri" icon={Boxes}>Stocuri</NavItem>
         {isAdmin && <NavItem to="/profit" icon={TrendingUp}>Profit</NavItem>}
+        {isAdmin && <NavItem to="/livrari" icon={Truck}>Analiza livrări</NavItem>}
         <div className="px-3 pb-1 pt-5 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Administrare</div>
         {isAdmin && <NavItem to="/istoric" icon={History}>Registru activitate</NavItem>}
         <NavItem to="/setari" icon={Settings}>Setări</NavItem>
