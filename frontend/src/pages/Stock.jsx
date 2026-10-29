@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet } from "lucide-react";
+import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet, Truck, Copy, Pencil, ChevronDown, ChevronRight } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtDateTime, fmtAgo, money } from "../lib/format";
@@ -25,6 +25,7 @@ const TABS = [
   { id: "valoare", label: "Valoare stoc" },
   { id: "istoric", label: "Istoric stocuri" },
   { id: "intrari", label: "Intrări marfă" },
+  { id: "furnizori", label: "Necesar furnizori" },
   { id: "miscari", label: "Mișcări" },
   { id: "setari", label: "Setări", admin: true },
 ];
@@ -82,6 +83,7 @@ export default function Stock() {
       {tab === "valoare" && <StockValue />}
       {tab === "istoric" && <StockHistory />}
       {tab === "intrari" && <Receipts />}
+      {tab === "furnizori" && <SupplierNeeds />}
       {tab === "miscari" && <Movements />}
       {tab === "setari" && <StockSettings summary={summary} onSaved={setSummary} />}
       </div>
@@ -929,5 +931,179 @@ function StockHistory() {
         </Card>
       )}
     </div>
+  );
+}
+
+
+function SupplierNeeds() {
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [edit, setEdit] = useState(null); // {id?, name, ...}
+  const [onlyNeeded, setOnlyNeeded] = useState(false);
+  const load = () => api("/stock/suppliers").then(setD).catch((e) => toast.error(e.message));
+  useEffect(() => { load(); }, []); // eslint-disable-line
+  if (!d) return <PageLoader />;
+  const totalOrder = d.suppliers.reduce((a, s) => a + s.to_order, 0) + d.unassigned.reduce((a, r) => a + r.to_order, 0);
+  return (
+    <div>
+      <Card className="mb-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0 text-sm text-slate-600">
+            <div className="text-base font-semibold text-slate-900">Ce trebuie comandat de la furnizori</div>
+            <div className="mt-1"><strong>Lipsă acum</strong> = rezervat − în depozit. <strong>Estimare {d.window_days} zile</strong> = câte bucăți s-au comandat în ultimele {d.window_days} zile (comenzi neanulate), proiectat pe următoarele {d.window_days} zile. <strong>De comandat</strong> = rezervat + estimare − în depozit.</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-brand" checked={onlyNeeded} onChange={(e) => setOnlyNeeded(e.target.checked)} /> Doar ce trebuie comandat</label>
+            <Button onClick={() => setEdit({ name: "", contact: "", phone: "", email: "", notes: "" })}><Plus className="h-4 w-4" /> Furnizor nou</Button>
+          </div>
+        </div>
+        {totalOrder > 0 && <div className="mt-3 text-sm font-medium text-slate-800">Total de comandat acum (cu estimarea pe {d.window_days} zile): <span className="text-brand">{totalOrder} buc</span></div>}
+      </Card>
+      {d.unassigned.length > 0 && (
+        <Card className="mb-4 overflow-hidden ring-amber-200">
+          <div className="flex items-center gap-2 border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-900"><AlertTriangle className="h-4 w-4" /> Produse de comandat care nu au furnizor setat ({d.unassigned.length})</div>
+          <NeedTable rows={d.unassigned} days={d.window_days} />
+        </Card>
+      )}
+      {d.suppliers.length === 0 ? (
+        <Card><Empty icon={Truck} title="Niciun furnizor încă">Apasă „Furnizor nou”, apoi adaugă produsele pe care le iei de la el.</Empty></Card>
+      ) : d.suppliers.map((s) => (
+        <SupplierCard key={s.id} s={s} days={d.window_days} onlyNeeded={onlyNeeded} onEdit={() => setEdit(s)} onChanged={load} />
+      ))}
+      {edit && <SupplierModal s={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
+    </div>
+  );
+}
+
+function SupplierCard({ s, days, onlyNeeded, onEdit, onChanged }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const rows = onlyNeeded ? s.items.filter((r) => r.to_order > 0) : s.items;
+  const copy = async () => {
+    const lines = s.items.filter((r) => r.to_order > 0).map((r) => `${r.to_order} buc — ${productName(r)}${r.sku ? ` (${r.sku})` : ""}`);
+    if (!lines.length) { toast.error("Nu e nimic de comandat de la acest furnizor"); return; }
+    const txt = `Comandă ${s.name}:\n` + lines.join("\n");
+    try { await navigator.clipboard.writeText(txt); toast.success("Lista de comandă a fost copiată"); }
+    catch { window.prompt("Copiază lista:", txt); }
+  };
+  const addProduct = async (r) => {
+    try { await api(`/stock/suppliers/${s.id}/products`, { method: "PUT", body: { add: [r.variant_id] } }); onChanged(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const remove = async (r) => {
+    try { await api(`/stock/suppliers/${s.id}/products`, { method: "PUT", body: { remove: [r.variant_id] } }); onChanged(); }
+    catch (e) { toast.error(e.message); }
+  };
+  return (
+    <Card className="mb-4 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+        <button onClick={() => setOpen(!open)} className="flex min-w-0 items-center gap-2 text-left">
+          {open ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+          <div className="min-w-0">
+            <div className="truncate text-base font-semibold">{s.name}</div>
+            <div className="text-xs text-slate-500">{[s.contact, s.phone, s.email].filter(Boolean).join(" · ") || "fără date de contact"} · {s.products} produse</div>
+          </div>
+        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {s.to_order > 0
+            ? <span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-semibold text-brand">De comandat: {s.to_order} buc ({s.lines_to_order} produse)</span>
+            : <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">Nimic de comandat</span>}
+          <Button size="sm" variant="outline" onClick={copy}><Copy className="h-3.5 w-3.5" /> Copiază comanda</Button>
+          <Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></Button>
+        </div>
+      </div>
+      {open && (
+        <>
+          {rows.length > 0 ? <NeedTable rows={rows} days={days} onRemove={remove} /> : <div className="px-5 py-4 text-sm text-slate-500">{s.items.length ? "Nimic de comandat acum." : "Niciun produs adăugat încă."}</div>}
+          <div className="border-t border-slate-100 px-5 py-3">
+            {adding ? (
+              <div className="flex items-center gap-2">
+                <div className="flex-1"><ProductPicker placeholder="Caută produsul pe care îl iei de la acest furnizor…" exclude={s.items.map((r) => r.variant_id)} onPick={addProduct} /></div>
+                <Button size="sm" variant="outline" onClick={() => setAdding(false)}>Gata</Button>
+              </div>
+            ) : (
+              <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"><Plus className="h-4 w-4" /> Adaugă produse la {s.name}</button>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function NeedTable({ rows, days, onRemove }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <th className="px-4 py-2.5">Produs</th>
+            <th className="px-3 py-2.5 text-right">În depozit</th>
+            <th className="px-3 py-2.5 text-right">Rezervat</th>
+            <th className="px-3 py-2.5 text-right">Lipsă acum</th>
+            <th className="px-3 py-2.5 text-right">Comandat ultimele {days} zile</th>
+            <th className="px-3 py-2.5 text-right">Estimare {days} zile</th>
+            <th className="px-3 py-2.5 text-right">De comandat</th>
+            {onRemove && <th className="w-10" />}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((r) => (
+            <tr key={r.variant_id} className={cx(r.to_order > 0 && "bg-brand-50/30")}>
+              <td className="px-4 py-2">
+                <div className="flex items-center gap-3">
+                  <Thumb src={r.image} />
+                  <div className="min-w-0">
+                    <div className="line-clamp-2 font-medium">{r.product_title}</div>
+                    <div className="text-xs text-slate-500">{[r.variant_title, r.sku].filter(Boolean).join(" · ")}{r.status === "DRAFT" && " · Draft"}</div>
+                  </div>
+                </div>
+              </td>
+              <td className="px-3 py-2 text-right"><Qty v={r.on_hand} /></td>
+              <td className="px-3 py-2 text-right tabular">{r.reserved || <span className="text-slate-300">0</span>}</td>
+              <td className={cx("px-3 py-2 text-right tabular", r.short_now > 0 ? "font-semibold text-red-600" : "text-slate-300")}>{r.short_now}</td>
+              <td className="px-3 py-2 text-right tabular text-slate-600">{r.sold_window}<div className="text-[11px] text-slate-400">{r.per_day}/zi</div></td>
+              <td className="px-3 py-2 text-right tabular text-slate-600">{r.forecast}</td>
+              <td className={cx("px-3 py-2 text-right text-base tabular", r.to_order > 0 ? "font-bold text-brand" : "text-slate-300")}>{r.to_order}</td>
+              {onRemove && <td className="px-2"><button title="Scoate de la acest furnizor" onClick={() => onRemove(r)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button></td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SupplierModal({ s, onClose, onSaved }) {
+  const toast = useToast();
+  const [f, setF] = useState({ name: s.name || "", contact: s.contact || "", phone: s.phone || "", email: s.email || "", notes: s.notes || "" });
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(s.id ? `/stock/suppliers/${s.id}` : "/stock/suppliers", { method: s.id ? "PATCH" : "POST", body: f });
+      toast.success("Furnizor salvat"); onSaved();
+    } catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  const del = async () => {
+    if (!window.confirm(`Ștergi furnizorul „${s.name}”? Produsele lui rămân în stocuri, doar fără furnizor.`)) return;
+    try { await api(`/stock/suppliers/${s.id}`, { method: "DELETE" }); toast.success("Furnizor șters"); onSaved(); }
+    catch (e) { toast.error(e.message); }
+  };
+  return (
+    <Modal open onClose={onClose} title={s.id ? `Furnizor: ${s.name}` : "Furnizor nou"}
+      footer={<>{s.id && <Button variant="ghost" className="mr-auto text-red-600" onClick={del}><Trash2 className="h-4 w-4" /> Șterge</Button>}
+        <Button variant="outline" onClick={onClose}>Renunță</Button><Button onClick={save} loading={busy} disabled={!f.name.trim()}>Salvează</Button></>}>
+      <div className="space-y-3">
+        <Field label="Nume furnizor"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Persoană de contact"><Input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} /></Field>
+          <Field label="Telefon"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>
+        </div>
+        <Field label="Email"><Input value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} /></Field>
+        <Field label="Observații"><Textarea rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="ex. termen livrare 2 zile, comandă minimă" /></Field>
+      </div>
+    </Modal>
   );
 }
