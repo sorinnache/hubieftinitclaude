@@ -482,7 +482,7 @@ def _row(v: dict, reserved: dict) -> dict:
     on_hand = int(v.get("on_hand") or 0)
     return {**{k: v.get(k) for k in ("variant_id", "product_id", "product_title", "variant_title", "sku", "image",
                                       "status", "deleted", "bundle", "min_stock", "location", "untracked")},
-            "is_bundle": is_bundle(v),
+            "is_bundle": is_bundle(v), "never_counted": not v.get("counted_at"),
             "on_hand": on_hand, "reserved": r["qty"], "available": on_hand - r["qty"]}
 
 
@@ -526,6 +526,8 @@ async def list_items(q: Optional[str] = None, view: str = "active", _: dict = De
         rows = [r for r in rows if r["is_bundle"] and not r.get("bundle")]
     elif view == "products":
         rows = [r for r in rows if not r["is_bundle"]]
+    elif view == "never_counted":
+        rows = [r for r in rows if r["never_counted"] and not r["is_bundle"]]
     return rows
 
 
@@ -547,6 +549,8 @@ async def summary(_: dict = Depends(get_current_user)):
             negative += 1
     return {
         "started": bool(s.get("start_at")), "start_at": s.get("start_at"),
+        "never_counted": await db.stock_variants.count_documents({"status": STOCK_STATUSES, "deleted": {"$ne": True},
+                                                                  "untracked": {"$ne": True}, **NOT_BUNDLE, **NEVER_COUNTED}),
         "variants": count, "units_on_hand": total_on_hand,
         "units_reserved": sum(r["qty"] for r in reserved.values()),
         "reserving_orders": await db.stock_orders.count_documents(await _reserve_query()),
@@ -690,6 +694,7 @@ async def save_inventory(body: InventoryBody, request: Request, user: dict = Dep
             continue
         if is_bundle(v):
             continue  # pachetele nu au stoc propriu
+        await mark_counted(it.variant_id, "inventar")
         delta = it.counted - int(v.get("on_hand") or 0)
         if delta:
             await move(it.variant_id, delta, "inventar", note=body.note or "", actor=user["name"],
@@ -728,8 +733,9 @@ async def create_receipt(body: ReceiptBody, request: Request, user: dict = Depen
         if not await _variant(it.variant_id):
             raise HTTPException(400, f"Produs inexistent: {it.variant_id}")
     for it in body.items:
-        await move(it.variant_id, it.qty, "intrare", ref=ref, note=body.note or "", actor=user["name"],
-                   ref_kind="receipt", ref_id=rid, expand_bundle=True)
+        for m in await move(it.variant_id, it.qty, "intrare", ref=ref, note=body.note or "", actor=user["name"],
+                            ref_kind="receipt", ref_id=rid, expand_bundle=True):
+            await mark_counted(m["variant_id"], "intrare")
     doc = {"id": rid, "supplier": body.supplier, "document": body.document, "note": body.note,
            "items": [i.model_dump() for i in body.items], "created_by": user["name"], "created_at": now_iso()}
     await db.stock_receipts.insert_one(dict(doc))
@@ -886,14 +892,36 @@ async def manual_sync(products: bool = True, _: dict = Depends(get_current_user)
 # salvată se aplică imediat (stocul devine exact cât s-a numărat), iar sesiunea se poate
 # finaliza doar după ce fiecare produs are o cantitate introdusă.
 
+async def mark_counted(vid: str, how: str):
+    """Produsul are de acum un stoc introdus (inventar sau intrare marfă)."""
+    await get_db().stock_variants.update_one({"variant_id": vid, "counted_at": {"$exists": False}},
+                                             {"$set": {"counted_at": now_iso(), "counted_how": how}})
+
+
+async def migrate_counted():
+    """Marchează produsele care au primit deja stoc prin inventar sau intrări (o singură dată, la pornire)."""
+    db = get_db()
+    seen = set()
+    async for sess in db.stock_inventory_sessions.find({}, {"_id": 0, "counts": 1}):
+        seen.update((sess.get("counts") or {}).keys())
+    async for m in db.stock_movements.find({"type": {"$in": ["inventar", "intrare"]}}, {"_id": 0, "variant_id": 1}):
+        seen.add(m["variant_id"])
+    if seen:
+        await db.stock_variants.update_many({"variant_id": {"$in": list(seen)}, "counted_at": {"$exists": False}},
+                                            {"$set": {"counted_at": now_iso(), "counted_how": "migrare"}})
+
+
+NEVER_COUNTED = {"counted_at": {"$exists": False}}
+
+
 def _inv_sort_key(v: dict):
     return ((v.get("location") or "~").lower(), (v.get("product_title") or "").lower(), (v.get("variant_title") or "").lower())
 
 
-async def _inv_targets() -> list[dict]:
+async def _inv_targets(only_new: bool = False) -> list[dict]:
     db = get_db()
     vs = await db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
-                                       **NOT_BUNDLE}, {"_id": 0}).to_list(20000)
+                                       **NOT_BUNDLE, **(NEVER_COUNTED if only_new else {})}, {"_id": 0}).to_list(20000)
     return sorted(vs, key=_inv_sort_key)
 
 
@@ -906,7 +934,8 @@ async def _session_view(sess: dict) -> dict:
     targets = await _inv_targets()
     ids = list(sess.get("order") or [])
     known = set(ids)
-    added = [v["variant_id"] for v in targets if v["variant_id"] not in known]
+    pool = await _inv_targets(only_new=True) if sess.get("scope") == "new" else targets
+    added = [v["variant_id"] for v in pool if v["variant_id"] not in known]
     if added:  # produse noi apărute în Shopify în timpul inventarului — intră la final
         ids += added
         await db.stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {"order": ids}})
@@ -927,7 +956,7 @@ async def _session_view(sess: dict) -> dict:
                       "counted_by": c.get("by") if c else None, "counted_at": c.get("at") if c else None})
     done = sum(1 for i in items if i["counted"] is not None)
     return {"id": sess["id"], "status": sess["status"], "started_at": sess["started_at"],
-            "started_by": sess.get("started_by"), "note": sess.get("note", ""),
+            "started_by": sess.get("started_by"), "note": sess.get("note", ""), "scope": sess.get("scope", "full"),
             "total": len(items), "done": done, "items": items}
 
 
@@ -939,20 +968,25 @@ async def get_session(_: dict = Depends(get_current_user)):
 
 class SessionStart(BaseModel):
     note: Optional[str] = ""
+    scope: str = "full"  # full = toate produsele · new = doar produsele la care nu s-a introdus niciodată stoc
 
 
 @router.post("/inventory/session")
 async def start_session(body: SessionStart, request: Request, user: dict = Depends(get_current_user)):
     sess = await _open_session()
     if not sess:
-        targets = await _inv_targets()
+        only_new = body.scope == "new"
+        targets = await _inv_targets(only_new=only_new)
         if not targets:
-            raise HTTPException(400, "Nu există produse de numărat. Sincronizează întâi produsele din Shopify.")
+            raise HTTPException(400, "Toate produsele au deja stoc introdus." if only_new
+                                else "Nu există produse de numărat. Sincronizează întâi produsele din Shopify.")
         sess = {"id": new_id(), "status": "open", "started_at": now_iso(), "started_by": user["name"],
-                "note": (body.note or "").strip(), "order": [v["variant_id"] for v in targets], "counts": {}}
+                "scope": "new" if only_new else "full",
+                "note": (body.note or "").strip() or ("Produse noi" if only_new else ""),
+                "order": [v["variant_id"] for v in targets], "counts": {}}
         await get_db().stock_inventory_sessions.insert_one(dict(sess))
         await audit.log(resource_type="stock", resource_id=sess["id"], action="stock.inventory_started", actor=user,
-                        details={"products": len(targets)}, ip=audit.client_ip(request))
+                        details={"products": len(targets), "scope": sess["scope"]}, ip=audit.client_ip(request))
     return {"session": await _session_view(sess)}
 
 
@@ -981,6 +1015,7 @@ async def session_count(body: SessionCount, user: dict = Depends(get_current_use
     if delta:
         await move(body.variant_id, delta, "inventar", note=note, actor=user["name"], ref_kind="inventory",
                    ref_id=sess["id"], expand_bundle=False)
+    await mark_counted(body.variant_id, "inventar")
     prev = (sess.get("counts") or {}).get(body.variant_id)
     await db.stock_inventory_sessions.update_one({"id": sess["id"]}, {"$set": {f"counts.{body.variant_id}": {
         "counted": body.counted, "before": prev["before"] if prev else before, "by": user["name"], "at": now_iso()}}})

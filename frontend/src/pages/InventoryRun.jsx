@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { X, ChevronLeft, Minus, Plus, Package, CheckCircle2, MapPin, List } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -9,6 +9,8 @@ const name = (i) => [i.product_title, i.variant_title].filter(Boolean).join(" â€
 
 export default function InventoryRun() {
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const onlyNew = params.get("nou") === "1";
   const toast = useToast();
   const { isAdmin } = useAuth();
   const [sess, setSess] = useState(undefined);
@@ -21,7 +23,7 @@ export default function InventoryRun() {
   const firstOpen = (s) => s.items.findIndex((i) => i.counted === null);
 
   useEffect(() => {
-    api("/stock/inventory/session", { method: "POST", body: {} })
+    api("/stock/inventory/session", { method: "POST", body: { scope: onlyNew ? "new" : "full" } })
       .then((r) => { setSess(r.session); const f = firstOpen(r.session); setIdx(f === -1 ? r.session.items.length : f); })
       .catch((e) => { toast.error(e.message); nav("/stocuri?tab=inventar"); });
   }, []); // eslint-disable-line
@@ -78,7 +80,7 @@ export default function InventoryRun() {
             <X className="h-5 w-5" />
           </button>
           <div className="text-center">
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Inventar</div>
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{sess.scope === "new" ? "Inventar Â· produse noi" : "Inventar"}</div>
             <div className="text-lg font-bold tabular">{sess.done} / {sess.total}</div>
           </div>
           <button onClick={() => setList(true)} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100" title="Lista produselor">

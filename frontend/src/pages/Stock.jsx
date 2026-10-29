@@ -136,6 +136,7 @@ function StockList({ summary, onChanged, goInventory }) {
 
   return (
     <>
+      {summary?.started && summary.never_counted > 0 && <NewProductsBanner n={summary.never_counted} onShow={() => setView("never_counted")} />}
       {summary && !summary.started && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand-50 px-5 py-4 ring-1 ring-brand/20">
           <div className="text-sm"><strong>Primul pas: inventarul inițial.</strong> Numără ce ai în depozit și introdu cantitățile. Din acel moment hub-ul scade automat stocul la fiecare AWB emis.</div>
@@ -168,6 +169,7 @@ function StockList({ summary, onChanged, goInventory }) {
             <option value="reserved">Doar cu rezervări</option>
             <option value="negative">Disponibil sub zero</option>
             <option value="products">Doar produse (fără pachete)</option>
+            <option value="never_counted">Fără stoc introdus niciodată (produse noi)</option>
             <option value="bundles">Doar pachete</option>
             <option value="bundles_todo">Pachete fără componente setate</option>
             <option value="untracked">Nu se urmăresc (garanții, servicii)</option>
@@ -206,6 +208,7 @@ function StockList({ summary, onChanged, goInventory }) {
                           <div className="text-xs text-slate-500">
                             {r.variant_title}
                             {r.is_bundle && <Pill className="ml-1 bg-violet-50 text-violet-700 ring-violet-200"><Layers className="mr-1 h-3 w-3" />Pachet</Pill>}
+                            {summary?.started && r.never_counted && !r.is_bundle && <Pill className="ml-1 bg-amber-50 text-amber-700 ring-amber-200">Stoc neintrodus</Pill>}
                             {r.status !== "ACTIVE" && <Pill className="ml-1 bg-slate-100 text-slate-500 ring-slate-200">{r.status === "DRAFT" ? "Draft" : r.status === "ARCHIVED" ? "Arhivat" : r.status}</Pill>}
                           </div>
                         </div>
@@ -508,6 +511,7 @@ function Inventory({ summary, onDone }) {
   };
   return (
     <div>
+      {summary?.started && summary.never_counted > 0 && <NewProductsBanner n={summary.never_counted} />}
       <GuidedInventoryCard />
       <button onClick={() => setManual(!manual)} className="mb-3 text-sm font-medium text-brand hover:underline">
         {manual ? "Ascunde corecția rapidă" : "Corecție rapidă pentru câteva produse (fără inventar complet)"}
@@ -572,6 +576,22 @@ function Inventory({ summary, onDone }) {
   );
 }
 
+function NewProductsBanner({ n, onShow }) {
+  const nav = useNavigate();
+  return (
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-amber-50 px-5 py-4 ring-1 ring-amber-200">
+      <div className="flex items-start gap-2 text-sm text-amber-900">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+        <div><strong>{n === 1 ? "1 produs nou nu are" : `${n} produse noi nu au`} stoc introdus niciodată.</strong> Au apărut în Shopify după inventar. Numără-le în depozit ca stocul să fie corect.</div>
+      </div>
+      <div className="flex gap-2">
+        {onShow && <Button variant="outline" onClick={onShow}>Vezi produsele</Button>}
+        <Button onClick={() => nav("/stocuri/inventar?nou=1")}><ClipboardList className="h-4 w-4" /> REIA INVENTAR</Button>
+      </div>
+    </div>
+  );
+}
+
 function GuidedInventoryCard() {
   const nav = useNavigate();
   const [sess, setSess] = useState(undefined);
@@ -580,14 +600,14 @@ function GuidedInventoryCard() {
     api("/stock/inventory/session").then((r) => setSess(r.session)).catch(() => setSess(null));
     api("/stock/inventory/sessions").then(setHist).catch(() => {});
   }, []);
-  const last = hist.find((h) => h.status === "done");
+  const last = hist.find((h) => h.status === "done" && h.scope !== "new");
   return (
     <Card className="mb-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 text-sm text-slate-600">
           <div className="text-base font-semibold text-slate-900">Inventar complet pe telefon</div>
           <div className="mt-1">Ia telefonul în depozit. Fiecare produs apare pe tot ecranul, pe rând; scrii cantitatea găsită și apeși „Salvează” — apare următorul. Nu se poate sări peste niciun produs, iar inventarul se finalizează doar când toate sunt numărate.</div>
-          {sess && <div className="mt-2 font-medium text-brand">Inventar în desfășurare: {sess.done} din {sess.total} produse numărate (pornit de {sess.started_by} la {fmtDateTime(sess.started_at)})</div>}
+          {sess && <div className="mt-2 font-medium text-brand">{sess.scope === "new" ? "Inventar produse noi" : "Inventar"} în desfășurare: {sess.done} din {sess.total} produse numărate (pornit de {sess.started_by} la {fmtDateTime(sess.started_at)})</div>}
           {!sess && last && <div className="mt-2 text-xs text-slate-500">Ultimul inventar complet: {fmtDateTime(last.finished_at)} de {last.finished_by} · {last.summary?.products} produse, {last.summary?.changed} cu diferențe</div>}
         </div>
         <Button size="lg" disabled={sess === undefined} onClick={() => nav("/stocuri/inventar")}>

@@ -19,6 +19,7 @@ async def lifespan(app: FastAPI):
     await ensure_indexes()
     await auth.seed_admin()
     await cases.seed_defaults()
+    await stock.migrate_counted()
     tasks = [asyncio.create_task(shipments.tracking_loop()), asyncio.create_task(stock.sync_loop()),
              asyncio.create_task(stock_reports.snapshot_loop()),
              asyncio.create_task(profit.sync_loop())]
