@@ -80,6 +80,7 @@ async def needs(_: dict = Depends(get_current_user)):
 
 class SupplierBody(BaseModel):
     name: str
+    cui: Optional[str] = ""
     contact: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""

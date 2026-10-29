@@ -4,6 +4,7 @@ import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, 
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtDateTime, fmtAgo, money } from "../lib/format";
+import SaftStocks from "./SaftStocks";
 import { Button, Card, Empty, Field, Input, Modal, PageLoader, Pill, Select, Textarea, cx, useToast } from "../components/ui";
 
 const TYPES = {
@@ -27,6 +28,7 @@ const TABS = [
   { id: "intrari", label: "Intrări marfă" },
   { id: "furnizori", label: "Necesar furnizori" },
   { id: "miscari", label: "Mișcări" },
+  { id: "saft", label: "SAF-T ANAF", admin: true },
   { id: "setari", label: "Setări", admin: true },
 ];
 
@@ -85,6 +87,7 @@ export default function Stock() {
       {tab === "intrari" && <Receipts />}
       {tab === "furnizori" && <SupplierNeeds />}
       {tab === "miscari" && <Movements />}
+      {tab === "saft" && <SaftStocks />}
       {tab === "setari" && <StockSettings summary={summary} onSaved={setSummary} />}
       </div>
     </div>
@@ -626,7 +629,9 @@ function Receipts() {
   const toast = useToast();
   const nav = useNavigate();
   const [list, setList] = useState(null);
-  const [form, setForm] = useState({ supplier: "", document: "", note: "" });
+  const [form, setForm] = useState({ supplier: "", supplier_cui: "", document: "", note: "" });
+  const [sups, setSups] = useState([]);
+  useEffect(() => { api("/stock/suppliers").then((x) => setSups(x.suppliers || [])).catch(() => {}); }, []);
   const [lines, setLines] = useState([]);
   const [busy, setBusy] = useState(false);
   const load = () => api("/stock/receipts").then(setList).catch(() => setList([]));
@@ -636,7 +641,7 @@ function Receipts() {
     try {
       await api("/stock/receipts", { method: "POST", body: { ...form, items: lines.map((l) => ({ variant_id: l.variant_id, qty: Number(l.qty) })) } });
       toast.success("Intrare înregistrată, stocul a crescut");
-      setLines([]); setForm({ supplier: "", document: "", note: "" }); load();
+      setLines([]); setForm({ supplier: "", supplier_cui: "", document: "", note: "" }); load();
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
   const valid = lines.length && lines.every((l) => Number(l.qty) > 0);
@@ -654,10 +659,18 @@ function Receipts() {
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
       <Card title="Intrare marfă nouă">
         <div className="space-y-4 p-5">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Field label="Furnizor"><Input value={form.supplier} onChange={(e) => setForm({ ...form, supplier: e.target.value })} /></Field>
-            <Field label="Document (factură / aviz / NIR)"><Input value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} /></Field>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Field label="Furnizor">
+              <Input list="furnizori-list" value={form.supplier} onChange={(e) => {
+                const v = e.target.value; const m = sups.find((x) => x.name.toLowerCase() === v.trim().toLowerCase());
+                setForm({ ...form, supplier: v, supplier_cui: m?.cui ? m.cui : form.supplier_cui });
+              }} />
+              <datalist id="furnizori-list">{sups.map((x) => <option key={x.id} value={x.name} />)}</datalist>
+            </Field>
+            <Field label="CUI furnizor"><Input value={form.supplier_cui} onChange={(e) => setForm({ ...form, supplier_cui: e.target.value })} placeholder="ex. 14399840" /></Field>
+            <Field label="Nr. factură furnizor"><Input value={form.document} onChange={(e) => setForm({ ...form, document: e.target.value })} /></Field>
           </div>
+          <div className="-mt-2 text-xs text-slate-500">CUI-ul și numărul facturii sunt necesare pentru declarația SAF-T de stocuri.</div>
           <div>
             <div className="mb-1.5 text-sm font-medium text-slate-700">Produse primite</div>
             {lines.map((l, i) => (
@@ -1079,7 +1092,7 @@ function NeedTable({ rows, days, onRemove }) {
 
 function SupplierModal({ s, onClose, onSaved }) {
   const toast = useToast();
-  const [f, setF] = useState({ name: s.name || "", contact: s.contact || "", phone: s.phone || "", email: s.email || "", notes: s.notes || "" });
+  const [f, setF] = useState({ name: s.name || "", cui: s.cui || "", contact: s.contact || "", phone: s.phone || "", email: s.email || "", notes: s.notes || "" });
   const [busy, setBusy] = useState(false);
   const save = async () => {
     setBusy(true);
@@ -1098,7 +1111,10 @@ function SupplierModal({ s, onClose, onSaved }) {
       footer={<>{s.id && <Button variant="ghost" className="mr-auto text-red-600" onClick={del}><Trash2 className="h-4 w-4" /> Șterge</Button>}
         <Button variant="outline" onClick={onClose}>Renunță</Button><Button onClick={save} loading={busy} disabled={!f.name.trim()}>Salvează</Button></>}>
       <div className="space-y-3">
-        <Field label="Nume furnizor"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_180px]">
+          <Field label="Nume furnizor"><Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus /></Field>
+          <Field label="CUI"><Input value={f.cui} onChange={(e) => setF({ ...f, cui: e.target.value })} placeholder="ex. 14399840" /></Field>
+        </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label="Persoană de contact"><Input value={f.contact} onChange={(e) => setF({ ...f, contact: e.target.value })} /></Field>
           <Field label="Telefon"><Input value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} /></Field>

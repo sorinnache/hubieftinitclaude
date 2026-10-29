@@ -751,6 +751,7 @@ class ReceiptItem(BaseModel):
 
 class ReceiptBody(BaseModel):
     supplier: Optional[str] = ""
+    supplier_cui: Optional[str] = ""
     document: Optional[str] = ""
     note: Optional[str] = ""
     items: list[ReceiptItem]
@@ -770,7 +771,8 @@ async def create_receipt(body: ReceiptBody, request: Request, user: dict = Depen
         for m in await move(it.variant_id, it.qty, "intrare", ref=ref, note=body.note or "", actor=user["name"],
                             ref_kind="receipt", ref_id=rid, expand_bundle=True):
             await mark_counted(m["variant_id"], "intrare")
-    doc = {"id": rid, "supplier": body.supplier, "document": body.document, "note": body.note,
+    doc = {"id": rid, "supplier": body.supplier, "supplier_cui": re.sub(r"\D", "", body.supplier_cui or ""),
+           "document": body.document, "note": body.note,
            "items": [i.model_dump() for i in body.items], "created_by": user["name"], "created_at": now_iso()}
     await db.stock_receipts.insert_one(dict(doc))
     await audit.log(resource_type="stock", resource_id=rid, action="stock.receipt", actor=user,
