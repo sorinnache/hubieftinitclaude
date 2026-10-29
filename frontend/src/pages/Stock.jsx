@@ -620,6 +620,7 @@ function GuidedInventoryCard() {
 
 function Receipts() {
   const toast = useToast();
+  const nav = useNavigate();
   const [list, setList] = useState(null);
   const [form, setForm] = useState({ supplier: "", document: "", note: "" });
   const [lines, setLines] = useState([]);
@@ -636,6 +637,16 @@ function Receipts() {
   };
   const valid = lines.length && lines.every((l) => Number(l.qty) > 0);
   return (
+    <>
+    <Card className="mb-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 text-sm text-slate-600">
+          <div className="text-base font-semibold text-slate-900">Intrare marfă pe telefon</div>
+          <div className="mt-1">Când vine marfa: cauți produsul, apeși pe el, scrii câte bucăți au venit și salvezi. Atât.</div>
+        </div>
+        <Button size="lg" onClick={() => nav("/stocuri/intrare")}><Plus className="h-5 w-5" /> Adaugă marfă</Button>
+      </div>
+    </Card>
     <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
       <Card title="Intrare marfă nouă">
         <div className="space-y-4 p-5">
@@ -676,6 +687,7 @@ function Receipts() {
         )}
       </Card>
     </div>
+    </>
   );
 }
 

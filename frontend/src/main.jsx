@@ -14,6 +14,7 @@ import Activity from "./pages/Activity";
 import Stock from "./pages/Stock";
 import InventoryRun from "./pages/InventoryRun";
 import Profit from "./pages/Profit";
+import ReceiveRun from "./pages/ReceiveRun";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -44,6 +45,7 @@ function App() {
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
       <Route path="/service/:id" element={<Protected><ServiceDetail /></Protected>} />
+      <Route path="/stocuri/intrare" element={<ProtectedBare><ReceiveRun /></ProtectedBare>} />
       <Route path="/stocuri/inventar" element={<ProtectedBare><InventoryRun /></ProtectedBare>} />
       <Route path="/stocuri" element={<Protected><Stock /></Protected>} />
       <Route path="/profit" element={<Protected><Profit /></Protected>} />
