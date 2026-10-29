@@ -153,22 +153,55 @@ async def move(vid: str, delta: int, mtype: str, *, ref: str = "", note: str = "
     for tvid, tdelta, primary in targets:
         if not tdelta:
             continue
-        v = await db.stock_variants.find_one_and_update(
-            {"variant_id": tvid}, {"$inc": {"on_hand": tdelta}, "$set": {"updated_at": now_iso()}},
-            return_document=True, projection={"_id": 0})
-        if v is None:  # varianta nu e încă sincronizată — o creăm minim
+        mnote, requested = note, None
+        cur = await db.stock_variants.find_one({"variant_id": tvid}, {"_id": 0, "on_hand": 1})
+        if tdelta > 0 and mtype == "awb_anulat" and order_id:
+            # revine doar cât s-a scăzut efectiv pentru această comandă
+            net = 0
+            async for pm in db.stock_movements.find({"order_id": order_id, "variant_id": tvid,
+                                                     "type": {"$in": ["vanzare", "awb_anulat", "inlocuire"]}},
+                                                    {"_id": 0, "delta": 1}):
+                net -= int(pm["delta"])
+            if net < tdelta:
+                requested, tdelta = tdelta, max(0, net)
+        if tdelta < 0:
+            # stocul fizic nu poate fi negativ: scădem cel mult cât există în sistem
+            have = max(int((cur or {}).get("on_hand") or 0), 0)
+            if -tdelta > have:
+                requested, tdelta = tdelta, -have
+                mnote = " · ".join(x for x in [note, f"Stoc insuficient în sistem: trebuiau scăzute {-requested} buc, "
+                                                     f"erau {have}. Verifică stocul (inventar greșit sau alt produs trimis)."] if x)
+        if cur is None:  # varianta nu e încă sincronizată — o creăm minim
             await db.stock_variants.insert_one({"variant_id": tvid, "product_title": "(variantă necunoscută)",
-                                                "variant_title": "", "on_hand": tdelta, "status": "UNKNOWN",
+                                                "variant_title": "", "on_hand": max(tdelta, 0), "status": "UNKNOWN",
                                                 "created_at": now_iso(), "updated_at": now_iso()})
-            v = {"on_hand": tdelta, "product_title": "(variantă necunoscută)"}
-        m = {"id": new_id(), "variant_id": tvid, "delta": tdelta, "type": mtype, "ref": ref, "note": note,
+            v = {"on_hand": max(tdelta, 0)}
+        else:
+            v = await db.stock_variants.find_one_and_update(
+                {"variant_id": tvid}, {"$inc": {"on_hand": tdelta}, "$set": {"updated_at": now_iso()}},
+                return_document=True, projection={"_id": 0})
+        m = {"id": new_id(), "variant_id": tvid, "delta": tdelta, "type": mtype, "ref": ref, "note": mnote,
              "actor": actor, "ref_kind": ref_kind, "ref_id": ref_id, "on_hand_after": v.get("on_hand", 0),
              "via_bundle": tvid != vid, "bundle_variant_id": vid if tvid != vid else None,
              "component_of": primary if primary and primary != tvid else None, "order_id": order_id or None,
-             "created_at": now_iso()}
+             "requested": requested, "shortfall": (requested is not None and requested < 0), "created_at": now_iso()}
         await db.stock_movements.insert_one(dict(m))
         out.append(m)
     return out
+
+
+async def fix_negative_stock():
+    """O singură dată: stocurile negative rămase de dinainte devin 0 (fizic nu pot fi sub zero)."""
+    db = get_db()
+    async for v in db.stock_variants.find({"on_hand": {"$lt": 0}}, {"_id": 0, "variant_id": 1, "on_hand": 1}):
+        n = -int(v["on_hand"])
+        await db.stock_variants.update_one({"variant_id": v["variant_id"]}, {"$set": {"on_hand": 0}})
+        await db.stock_movements.insert_one({
+            "id": new_id(), "variant_id": v["variant_id"], "delta": n, "type": "ajustare",
+            "ref": "Corecție automată", "note": f"Stocul era {-n} în sistem (s-au expediat mai multe bucăți decât erau "
+                                                f"înregistrate). Stocul fizic nu poate fi negativ — adus la 0.",
+            "actor": "Sistem", "ref_kind": "", "ref_id": "", "on_hand_after": 0, "via_bundle": False,
+            "bundle_variant_id": None, "component_of": None, "order_id": None, "created_at": now_iso()})
 
 
 # ------------------------------------------------------------------ produse
@@ -483,7 +516,8 @@ def _row(v: dict, reserved: dict) -> dict:
     return {**{k: v.get(k) for k in ("variant_id", "product_id", "product_title", "variant_title", "sku", "image",
                                       "status", "deleted", "bundle", "min_stock", "location", "untracked")},
             "is_bundle": is_bundle(v), "never_counted": not v.get("counted_at"),
-            "on_hand": on_hand, "reserved": r["qty"], "available": on_hand - r["qty"]}
+            "on_hand": on_hand, "reserved": r["qty"], "available": on_hand - r["qty"],
+            "need": max(0, r["qty"] - max(on_hand, 0))}
 
 
 @router.get("/items")

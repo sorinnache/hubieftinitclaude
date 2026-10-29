@@ -151,11 +151,11 @@ function StockList({ summary, onChanged, goInventory }) {
             ["Bucăți în depozit", summary.units_on_hand, Boxes],
             ["Bucăți rezervate", summary.units_reserved, Package],
             ["Comenzi confirmate de expediat", summary.reserving_orders, ClipboardList],
-            ["Produse sub zero", summary.negative, AlertTriangle],
+            ["Produse cu necesar (lipsă)", summary.negative, AlertTriangle],
           ].map(([l, v, I]) => (
             <Card key={l} className="p-4">
               <div className="flex items-center gap-2 text-xs text-slate-500"><I className="h-3.5 w-3.5" /> {l}</div>
-              <div className={cx("mt-1 text-2xl font-bold tabular", l === "Produse sub zero" && v > 0 && "text-red-600")}>{v}</div>
+              <div className={cx("mt-1 text-2xl font-bold tabular", l.startsWith("Produse cu necesar") && v > 0 && "text-red-600")}>{v}</div>
             </Card>
           ))}
         </div>
@@ -169,7 +169,7 @@ function StockList({ summary, onChanged, goInventory }) {
           <Select value={view} onChange={(e) => setView(e.target.value)}>
             <option value="active">Produse active + draft</option>
             <option value="reserved">Doar cu rezervări</option>
-            <option value="negative">Disponibil sub zero</option>
+            <option value="negative">Cu necesar (rezervat peste stoc)</option>
             <option value="products">Doar produse (fără pachete)</option>
             <option value="never_counted">Fără stoc introdus niciodată (produse noi)</option>
             <option value="bundles">Doar pachete</option>
@@ -193,6 +193,7 @@ function StockList({ summary, onChanged, goInventory }) {
                   <th className="px-4 py-3 text-right">În depozit</th>
                   <th className="px-4 py-3 text-right">Rezervat</th>
                   <th className="px-4 py-3 text-right">Disponibil</th>
+                  <th className="px-4 py-3 text-right" title="Câte bucăți lipsesc ca să acoperi comenzile rezervate">Necesar</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -218,7 +219,7 @@ function StockList({ summary, onChanged, goInventory }) {
                     </td>
                     <td className="hidden whitespace-nowrap px-4 py-2.5 font-mono text-xs text-slate-500 md:table-cell">{r.sku || "—"}</td>
                     {r.is_bundle ? (
-                      <td colSpan={3} className="px-4 py-2.5 text-right text-xs text-slate-500">
+                      <td colSpan={4} className="px-4 py-2.5 text-right text-xs text-slate-500">
                         {r.bundle?.length
                           ? <>se pot face <strong className="text-slate-900">{Math.max(0, r.bundle_available ?? 0)}</strong> pachete din stoc</>
                           : <span className="font-medium text-amber-600">componente nesetate — click ca să le adaugi</span>}
@@ -228,6 +229,7 @@ function StockList({ summary, onChanged, goInventory }) {
                         <td className="px-4 py-2.5 text-right"><Qty v={r.on_hand} /></td>
                         <td className="px-4 py-2.5 text-right">{r.reserved ? <span className="tabular text-amber-600">{r.reserved}</span> : <span className="text-slate-300">0</span>}</td>
                         <td className="px-4 py-2.5 text-right"><Qty v={r.available} strong /></td>
+                        <td className={cx("px-4 py-2.5 text-right tabular", r.need > 0 ? "font-bold text-red-600" : "text-slate-300")}>{r.need}</td>
                       </>
                     )}
                   </tr>
@@ -306,11 +308,11 @@ function ItemModal({ vid, onClose, onChanged }) {
             <div className="text-sm text-slate-500">SKU <span className="font-mono text-slate-800">{d.sku || "—"}</span></div>
           </div>
           {!d.is_bundle && (
-            <div className="grid grid-cols-3 gap-3">
-              {[["În depozit", d.on_hand], ["Rezervat", d.reserved], ["Disponibil", d.available]].map(([l, v]) => (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[["În depozit", d.on_hand], ["Rezervat", d.reserved], ["Disponibil", d.available], ["Necesar", d.need]].map(([l, v]) => (
                 <div key={l} className="rounded-lg bg-slate-50 px-3 py-2.5">
                   <div className="text-[11px] text-slate-500">{l}</div>
-                  <div className={cx("text-xl font-bold tabular", v < 0 && "text-red-600")}>{v}</div>
+                  <div className={cx("text-xl font-bold tabular", (v < 0 || (l === "Necesar" && v > 0)) && "text-red-600")}>{v}</div>
                 </div>
               ))}
             </div>
@@ -398,7 +400,7 @@ function MovementRow({ m, showProduct, onChanged }) {
       <Pill className={t.cls}>{t.label}</Pill>
       <div className="min-w-0 flex-1">
         {showProduct && <div className="truncate font-medium">{productName(m)}</div>}
-        <div className="line-clamp-2 text-xs text-slate-500">{info || "—"}</div>
+        <div className={cx("line-clamp-3 text-xs", m.shortfall ? "font-medium text-amber-700" : "text-slate-500")}>{info || "—"}</div>
       </div>
       {canSwap && onChanged && (
         <Button size="sm" variant="outline" onClick={() => setSwap(true)} title="Depozitul a trimis alt produs echivalent">S-a trimis alt produs</Button>
