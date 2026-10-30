@@ -213,7 +213,7 @@ function StockList({ summary, onChanged, goInventory }) {
                           <div className="line-clamp-2 font-medium">{r.product_title}</div>
                           <div className="text-xs text-slate-500">
                             {r.variant_title}
-                            {r.is_bundle && <Pill className="ml-1 bg-violet-50 text-violet-700 ring-violet-200"><Layers className="mr-1 h-3 w-3" />Pachet</Pill>}
+                            {r.is_bundle && <Pill className="ml-1 bg-violet-50 text-violet-700 ring-violet-200"><Layers className="mr-1 h-3 w-3" />{r.surprise ? "Produs surpriză" : "Pachet"}</Pill>}
                             {summary?.started && r.never_counted && !r.is_bundle && <Pill className="ml-1 bg-amber-50 text-amber-700 ring-amber-200">Stoc neintrodus</Pill>}
                             {r.status !== "ACTIVE" && <Pill className="ml-1 bg-slate-100 text-slate-500 ring-slate-200">{r.status === "DRAFT" ? "Draft" : r.status === "ARCHIVED" ? "Arhivat" : r.status}</Pill>}
                           </div>
@@ -341,7 +341,9 @@ function ItemModal({ vid, onClose, onChanged }) {
             </div>
           )}
 
-          <div className="rounded-xl ring-1 ring-slate-200 p-4">
+          {(d.surprise || !d.is_bundle) && <SurpriseBox d={d} vid={vid} onSaved={() => { load(); onChanged(); }} />}
+
+          {!d.surprise && <div className="rounded-xl ring-1 ring-slate-200 p-4">
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-600" checked={!!d.is_bundle} onChange={async (e) => {
                 const on = e.target.checked;
@@ -366,7 +368,7 @@ function ItemModal({ vid, onClose, onChanged }) {
               <Button size="sm" onClick={saveBundle} disabled={bundleSig(bundle) === bundleSig(d.bundle_components)}>Salvează componentele</Button>
             </div>
             </div>}
-          </div>
+          </div>}
 
           {!d.is_bundle && <AlternatesBox d={d} vid={vid} onSaved={() => { load(); onChanged(); }} />}
 
@@ -389,6 +391,67 @@ function ItemModal({ vid, onClose, onChanged }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+function SurpriseBox({ d, vid, onSaved }) {
+  const toast = useToast();
+  const comp = (d.bundle_components || [])[0];
+  const initial = d.surprise && comp ? [comp, ...(comp.alternates || [])].map((x) => ({ ...x })) : [];
+  const [list, setList] = useState(initial);
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setList(initial); }, [d]); // eslint-disable-line
+  const dirty = JSON.stringify(list.map((a) => a.variant_id)) !== JSON.stringify(initial.map((a) => a.variant_id));
+  const put = async (body, msg) => {
+    setBusy(true);
+    try { await api(`/stock/items/${vid}/surprise`, { method: "PUT", body }); toast.success(msg); onSaved(); }
+    catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  const move = (k, dir) => { const l = [...list]; const j = k + dir; if (j < 0 || j >= l.length) return; [l[k], l[j]] = [l[j], l[k]]; setList(l); };
+  return (
+    <div className="rounded-xl p-4 ring-1 ring-amber-200 bg-amber-50/30">
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5 h-4 w-4 accent-amber-600" checked={!!d.surprise} disabled={busy} onChange={(e) => {
+          const on = e.target.checked;
+          if (on && d.on_hand && !window.confirm(`Produsul are ${d.on_hand} buc în depozit. Produsul surpriză nu are stoc propriu, așa că soldul devine 0. Continui?`)) return;
+          if (!on && !window.confirm("Nu mai e produs surpriză? Lista de produse se șterge.")) return;
+          put({ enabled: on, products: [] }, on ? "Marcat ca produs surpriză — adaugă produsele" : "Nu mai e produs surpriză");
+        }} />
+        <span><strong>🎁 Produs surpriză</strong>
+          <span className="block text-xs text-slate-500">Alegi până la 5 produse, în ordinea priorității. La fiecare AWB se scade din produsul 1; când el ajunge la 0, din produsul 2, și tot așa. Nu se numără la inventar.</span></span>
+      </label>
+      {d.surprise && (
+        <div className="mt-3">
+          {list.length === 0 && <p className="mb-2 text-xs font-medium text-amber-700">Adaugă produsele care se pun în colet ca surpriză.</p>}
+          {list.map((a, k) => (
+            <div key={a.variant_id} className="mb-2 flex items-center gap-3 rounded-lg bg-white p-2 ring-1 ring-slate-200">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-amber-500 text-sm font-bold text-white">{k + 1}</span>
+              <Thumb src={a.image} />
+              <div className="min-w-0 flex-1">
+                <div className="line-clamp-2 text-sm font-medium">{productName(a)}</div>
+                <div className="text-xs text-slate-500">{a.sku || "fără SKU"} · în depozit <strong className={a.on_hand > 0 ? "text-emerald-700" : "text-red-600"}>{a.on_hand ?? 0}</strong></div>
+              </div>
+              <div className="flex shrink-0 flex-col">
+                <button disabled={k === 0} onClick={() => move(k, -1)} className="rounded px-1 text-slate-400 hover:text-slate-800 disabled:opacity-30"><ChevronDown className="h-4 w-4 rotate-180" /></button>
+                <button disabled={k === list.length - 1} onClick={() => move(k, 1)} className="rounded px-1 text-slate-400 hover:text-slate-800 disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
+              </div>
+              <button onClick={() => setList(list.filter((_, j) => j !== k))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+            </div>
+          ))}
+          {list.length < 5 && (adding ? (
+            <div className="flex items-center gap-2">
+              <div className="flex-1"><ProductPicker placeholder="Caută produsul pus ca surpriză…" exclude={[vid, ...list.map((a) => a.variant_id)]}
+                onPick={(r) => { setList([...list, { variant_id: r.variant_id, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image, on_hand: r.on_hand }]); setAdding(false); }} /></div>
+              <button onClick={() => setAdding(false)} className="rounded p-1.5 text-slate-400 hover:bg-slate-200"><X className="h-4 w-4" /></button>
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:underline"><Plus className="h-3.5 w-3.5" /> Adaugă produs ({list.length}/5)</button>
+          ))}
+          {dirty && <div className="mt-3 flex justify-end"><Button size="sm" loading={busy} onClick={() => put({ enabled: true, products: list.map((a) => a.variant_id) }, "Produsele surpriză au fost salvate")}>Salvează ordinea</Button></div>}
+        </div>
+      )}
+    </div>
   );
 }
 

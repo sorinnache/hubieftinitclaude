@@ -25,6 +25,7 @@ const OTHER = {
   "stock.inventory_started": "Inventar pornit",
   "stock.swap": "Înlocuire produs trimis",
   "stock.alternates": "Înlocuitori produs modificați",
+  "stock.surprise": "Produs surpriză modificat",
   "stock.snapshot": "Situație stoc salvată (istoric)",
   "stock.inventory_abandoned": "Inventar abandonat",
   "stock.receipt": "Intrare marfă",

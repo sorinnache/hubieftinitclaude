@@ -534,7 +534,7 @@ def _row(v: dict, reserved: dict) -> dict:
     on_hand = int(v.get("on_hand") or 0)
     return {**{k: v.get(k) for k in ("variant_id", "product_id", "product_title", "variant_title", "sku", "image",
                                       "status", "deleted", "bundle", "min_stock", "location", "untracked")},
-            "is_bundle": is_bundle(v), "never_counted": not v.get("counted_at"),
+            "is_bundle": is_bundle(v), "surprise": bool(v.get("surprise")), "never_counted": not v.get("counted_at"),
             "on_hand": on_hand, "reserved": r["qty"], "available": on_hand - r["qty"],
             "need": max(0, r["qty"] - max(on_hand, 0))}
 
@@ -895,6 +895,48 @@ async def set_bundle(vid: str, body: BundleBody, request: Request, user: dict = 
     return await item_detail(vid, user)
 
 
+class SurpriseBody(BaseModel):
+    enabled: bool = True
+    products: list[str] = []  # în ordinea priorității, maxim 5
+
+
+@router.put("/items/{vid}/surprise")
+async def set_surprise(vid: str, body: SurpriseBody, request: Request, user: dict = Depends(get_current_user)):
+    """Produs surpriză: la AWB se scade din primul produs din listă care are stoc, apoi din al doilea etc."""
+    db = get_db()
+    v = await _variant(vid)
+    if not v:
+        raise HTTPException(404, "Produs inexistent")
+    if not body.enabled:
+        await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"surprise": False, "is_bundle": False, "bundle": None}})
+        await audit.log(resource_type="stock", resource_id=vid, action="stock.surprise", actor=user,
+                        details={"product": _title(v), "enabled": False}, ip=audit.client_ip(request))
+        return await item_detail(vid, user)
+    if await db.stock_variants.find_one({"bundle.variant_id": vid}):
+        raise HTTPException(400, "Produsul e componentă într-un pachet, deci nu poate fi produs surpriză.")
+    prods = []
+    for p in body.products:
+        if p == vid or p in prods:
+            continue
+        pv = await _variant(p)
+        if not pv:
+            raise HTTPException(400, "Produs inexistent")
+        if is_bundle(pv):
+            raise HTTPException(400, f"„{_title(pv)}” e pachet — alege produse simple.")
+        prods.append(p)
+    if len(prods) > 5:
+        raise HTTPException(400, "Poți seta maxim 5 produse pentru produsul surpriză.")
+    bundle = [{"variant_id": prods[0], "qty": 1, "alternates": prods[1:]}] if prods else None
+    await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"surprise": True, "is_bundle": True, "bundle": bundle}})
+    if int(v.get("on_hand") or 0):
+        await move(vid, -int(v["on_hand"]), "ajustare", note="Marcat ca produs surpriză — stocul se ține pe produsele din listă",
+                   actor=user["name"], expand_bundle=False)
+    await audit.log(resource_type="stock", resource_id=vid, action="stock.surprise", actor=user,
+                    details={"product": _title(v), "products": [_title(await _variant(p) or {}) for p in prods]},
+                    ip=audit.client_ip(request))
+    return await item_detail(vid, user)
+
+
 class AlternatesBody(BaseModel):
     alternates: list[str] = []
 
@@ -946,6 +988,7 @@ async def set_meta(vid: str, body: ItemMeta, request: Request, user: dict = Depe
                 raise HTTPException(400, f"Produsul e componentă în pachetul „{used.get('product_title')}”, deci nu poate fi pachet.")
         else:
             upd["bundle"] = None  # nu mai e pachet: ștergem și componentele
+            upd["surprise"] = False
         if upd["is_bundle"] and int(v.get("on_hand") or 0):
             await move(vid, -int(v["on_hand"]), "ajustare", note="Marcat ca pachet — stocul se ține pe componente",
                        actor=user["name"], expand_bundle=False)
