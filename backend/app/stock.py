@@ -97,6 +97,16 @@ def _candidates(comp: dict) -> list[str]:
     return out
 
 
+async def candidates_for(comp: dict) -> list[str]:
+    """Principalul + înlocuitorii setați pe componentă + înlocuitorii setați pe produsul principal."""
+    out = _candidates(comp)
+    pv = await _variant(comp["variant_id"]) or {}
+    for a in pv.get("alternates") or []:
+        if a not in out:
+            out.append(a)
+    return out
+
+
 async def _allocate(vid: str, delta: int, order_id: str = "") -> list[tuple[str, int, Optional[str]]]:
     """Descompune o mișcare pe un pachet în mișcări pe componente, ținând cont de înlocuitori.
     Ieșire (vânzare): se scade din principal cât are în stoc, apoi din înlocuitori (în ordine);
@@ -113,7 +123,7 @@ async def _allocate(vid: str, delta: int, order_id: str = "") -> list[tuple[str,
         comps = [{"variant_id": vid, "qty": 1, "alternates": alts}]  # produs simplu cu înlocuitori
     out: list[tuple[str, int, Optional[str]]] = []
     for c in comps:
-        cands = _candidates(c)
+        cands = await candidates_for(c)
         need = int(c["qty"]) * abs(delta)
         if len(cands) == 1:
             out.append((cands[0], need if delta > 0 else -need, c["variant_id"]))
@@ -449,7 +459,7 @@ async def reserved_map() -> dict[str, dict]:
                 continue
             for c in comps:
                 q = int(c["qty"]) * l["unfulfilled"]
-                cands = _candidates(c)
+                cands = await candidates_for(c)
                 if len(cands) == 1:
                     add(cands[0], q, o)
                 else:
@@ -554,7 +564,7 @@ async def list_items(q: Optional[str] = None, view: str = "active", _: dict = De
             avail = []
             for c in comps:
                 tot = 0
-                for cid in _candidates(c):
+                for cid in await candidates_for(c):
                     cv = by_id.get(cid) or _row(await _variant(cid) or {"variant_id": cid}, reserved)
                     tot += max(cv["available"], 0)
                 avail.append(tot // max(1, int(c["qty"])))
@@ -696,7 +706,7 @@ async def _swap_context(mid: str):
 async def swap_options(mid: str, _: dict = Depends(get_current_user)):
     m, b, comp = await _swap_context(mid)
     out = []
-    for cid in _candidates(comp):
+    for cid in await candidates_for(comp):
         if cid == m["variant_id"]:
             continue
         v = await _variant(cid) or {}
@@ -714,7 +724,7 @@ class SwapBody(BaseModel):
 async def swap_movement(mid: str, body: SwapBody, request: Request, user: dict = Depends(get_current_user)):
     """Depozitul a trimis alt produs decât cel scăzut automat: punem înapoi pe cel scăzut și scădem din cel trimis."""
     m, b, comp = await _swap_context(mid)
-    cands = _candidates(comp)
+    cands = await candidates_for(comp)
     if body.variant_id not in cands or body.variant_id == m["variant_id"]:
         raise HTTPException(400, "Produsul ales nu e principalul sau un înlocuitor al acestei componente.")
     n = -int(m["delta"])
