@@ -19,3 +19,13 @@ html.embed, html.embed body { background: transparent; }
   .print-break { break-inside: avoid; }
   .shadow-sm, .shadow { box-shadow: none !important; }
 }
+
+/* Dashboard live */
+@keyframes dash-in { 0% { opacity: 0; transform: translateY(-14px) scale(.98); background: rgba(233,30,99,.35); } 60% { opacity: 1; transform: none; } 100% { background: rgba(255,255,255,.03); } }
+.dash-new { animation: dash-in 2.4s ease-out; }
+@keyframes dash-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
+.dash-pulse { animation: dash-pulse 1.6s ease-in-out infinite; }
+@keyframes dash-pop { 0% { transform: scale(1); } 30% { transform: scale(1.06); color: #ff4f93; } 100% { transform: scale(1); } }
+.dash-pop { animation: dash-pop .9s ease-out; display: inline-block; }
+.dash-bg { background: radial-gradient(1200px 600px at 10% -10%, rgba(233,30,99,.18), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgba(99,102,241,.16), transparent 60%), #070a13; }
+.dash-card { background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.025)); border: 1px solid rgba(255,255,255,.08); border-radius: 20px; backdrop-filter: blur(6px); }

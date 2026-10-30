@@ -7,7 +7,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import admin, auth, cases, config, deliveries, depot, public, shipments, profit, saft, shopify, stock, stock_reports, stock_suppliers
+from . import admin, auth, cases, config, dashboard, deliveries, depot, public, shipments, profit, saft, shopify, stock, stock_reports, stock_suppliers
 from .db import ensure_indexes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
     tasks = [asyncio.create_task(shipments.tracking_loop()), asyncio.create_task(stock.sync_loop()),
              asyncio.create_task(stock_reports.snapshot_loop()),
              asyncio.create_task(profit.sync_loop()), asyncio.create_task(deliveries.tracking_loop()),
-             asyncio.create_task(depot.loop())]
+             asyncio.create_task(depot.loop()), asyncio.create_task(dashboard.loop())]
     yield
     for t in tasks:
         t.cancel()
@@ -48,6 +48,7 @@ api.include_router(stock_suppliers.router)
 api.include_router(profit.router)
 api.include_router(deliveries.router)
 api.include_router(depot.router)
+api.include_router(dashboard.router)
 api.include_router(saft.router)
 api.include_router(stock.router)
 

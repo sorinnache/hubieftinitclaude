@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp, Truck, Warehouse } from "lucide-react";
+import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp, Truck, Warehouse, LayoutDashboard } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import { cx } from "./ui";
 
-function NavItem({ to, icon: Icon, children, count }) {
+function NavItem({ to, icon: Icon, children, count, end }) {
   return (
     <NavLink
       to={to}
+      end={end}
       className={({ isActive }) =>
         cx(
           "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
@@ -55,6 +56,7 @@ export default function Layout({ children }) {
       </div>
       <div className="flex-1 space-y-1 px-3 py-2">
         <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-widest text-slate-400">Module</div>
+        <NavItem to="/" icon={LayoutDashboard} end>Dashboard</NavItem>
         <NavItem to="/retururi" icon={RotateCcw} count={counts.return}>Retururi</NavItem>
         <NavItem to="/service" icon={Wrench} count={counts.service}>Service & schimb</NavItem>
         <NavItem to="/stocuri" icon={Boxes}>Stocuri</NavItem>

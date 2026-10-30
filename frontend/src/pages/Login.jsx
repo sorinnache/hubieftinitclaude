@@ -10,7 +10,7 @@ export default function Login() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  if (user) return <Navigate to="/retururi" replace />;
+  if (user) return <Navigate to="/" replace />;
 
   const submit = async (e) => {
     e.preventDefault();

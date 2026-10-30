@@ -17,6 +17,7 @@ import Profit from "./pages/Profit";
 import Livrari from "./pages/Livrari";
 import ReceiveRun from "./pages/ReceiveRun";
 import Depot from "./pages/Depot";
+import Dashboard from "./pages/Dashboard";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -42,7 +43,8 @@ function App() {
       <Route path="/service/public" element={<PublicService />} />
       <Route path="/formular-service" element={<PublicService />} />
       <Route path="/login" element={<Login />} />
-      <Route path="/" element={<Navigate to="/retururi" replace />} />
+      <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/ecran" element={<ProtectedBare><Dashboard tv /></ProtectedBare>} />
       <Route path="/retururi" element={<Protected><CaseList kind="return" /></Protected>} />
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
@@ -55,7 +57,7 @@ function App() {
       <Route path="/livrari" element={<Protected><Livrari /></Protected>} />
       <Route path="/istoric" element={<Protected><Activity /></Protected>} />
       <Route path="/setari" element={<Protected><Settings /></Protected>} />
-      <Route path="*" element={<Navigate to="/retururi" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
