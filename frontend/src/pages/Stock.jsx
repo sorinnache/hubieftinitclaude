@@ -955,10 +955,13 @@ function SupplierNeeds() {
   const [d, setD] = useState(null);
   const [edit, setEdit] = useState(null); // {id?, name, ...}
   const [onlyNeeded, setOnlyNeeded] = useState(false);
+  const [showAllUn, setShowAllUn] = useState(false);
   const load = () => api("/stock/suppliers").then(setD).catch((e) => toast.error(e.message));
   useEffect(() => { load(); }, []); // eslint-disable-line
   if (!d) return <PageLoader />;
   const totalOrder = d.suppliers.reduce((a, s) => a + s.to_order, 0) + d.unassigned.reduce((a, r) => a + r.to_order, 0);
+  const unNeeded = d.unassigned.filter((r) => r.to_order > 0);
+  const unRows = showAllUn ? d.unassigned : unNeeded;
   return (
     <div>
       <Card className="mb-4 p-5">
@@ -976,21 +979,28 @@ function SupplierNeeds() {
       </Card>
       {d.unassigned.length > 0 && (
         <Card className="mb-4 overflow-hidden ring-amber-200">
-          <div className="flex items-center gap-2 border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-900"><AlertTriangle className="h-4 w-4" /> Produse de comandat care nu au furnizor setat ({d.unassigned.length})</div>
-          <NeedTable rows={d.unassigned} days={d.window_days} />
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm">
+            <div className="flex items-center gap-2 font-semibold text-amber-900"><AlertTriangle className="h-4 w-4" />
+              {showAllUn ? `Toate produsele fără furnizor (${d.unassigned.length})` : `Produse de comandat care nu au furnizor setat (${unNeeded.length})`}</div>
+            <button onClick={() => setShowAllUn(!showAllUn)} className="text-xs font-medium text-amber-900 underline">
+              {showAllUn ? "Arată doar ce trebuie comandat" : `Arată toate produsele fără furnizor (${d.unassigned.length})`}
+            </button>
+          </div>
+          {unRows.length > 0 ? <NeedTable rows={unRows} days={d.window_days} suppliers={d.suppliers} onChanged={load} />
+            : <div className="px-5 py-4 text-sm text-slate-500">Toate produsele de comandat au furnizor.</div>}
         </Card>
       )}
       {d.suppliers.length === 0 ? (
         <Card><Empty icon={Truck} title="Niciun furnizor încă">Apasă „Furnizor nou”, apoi adaugă produsele pe care le iei de la el.</Empty></Card>
       ) : d.suppliers.map((s) => (
-        <SupplierCard key={s.id} s={s} days={d.window_days} onlyNeeded={onlyNeeded} onEdit={() => setEdit(s)} onChanged={load} />
+        <SupplierCard key={s.id} s={s} suppliers={d.suppliers} days={d.window_days} onlyNeeded={onlyNeeded} onEdit={() => setEdit(s)} onChanged={load} />
       ))}
       {edit && <SupplierModal s={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
     </div>
   );
 }
 
-function SupplierCard({ s, days, onlyNeeded, onEdit, onChanged }) {
+function SupplierCard({ s, suppliers, days, onlyNeeded, onEdit, onChanged }) {
   const toast = useToast();
   const [open, setOpen] = useState(true);
   const [adding, setAdding] = useState(false);
@@ -1030,7 +1040,7 @@ function SupplierCard({ s, days, onlyNeeded, onEdit, onChanged }) {
       </div>
       {open && (
         <>
-          {rows.length > 0 ? <NeedTable rows={rows} days={days} onRemove={remove} /> : <div className="px-5 py-4 text-sm text-slate-500">{s.items.length ? "Nimic de comandat acum." : "Niciun produs adăugat încă."}</div>}
+          {rows.length > 0 ? <NeedTable rows={rows} days={days} onRemove={remove} suppliers={suppliers} onChanged={onChanged} /> : <div className="px-5 py-4 text-sm text-slate-500">{s.items.length ? "Nimic de comandat acum." : "Niciun produs adăugat încă."}</div>}
           <div className="border-t border-slate-100 px-5 py-3">
             {adding ? (
               <div className="flex items-center gap-2">
@@ -1047,13 +1057,23 @@ function SupplierCard({ s, days, onlyNeeded, onEdit, onChanged }) {
   );
 }
 
-function NeedTable({ rows, days, onRemove }) {
+function NeedTable({ rows, days, onRemove, suppliers = [], onChanged }) {
+  const toast = useToast();
+  const assign = async (r, sid) => {
+    try {
+      await api("/stock/suppliers/assign", { method: "PUT", body: { variant_id: r.variant_id, supplier_id: sid || null } });
+      const name = suppliers.find((x) => x.id === sid)?.name;
+      toast.success(name ? `Mutat la ${name}` : "Produsul nu mai are furnizor");
+      onChanged?.();
+    } catch (e) { toast.error(e.message); }
+  };
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
             <th className="px-4 py-2.5">Produs</th>
+            <th className="px-3 py-2.5">Furnizor</th>
             <th className="px-3 py-2.5 text-right">În depozit</th>
             <th className="px-3 py-2.5 text-right">Rezervat</th>
             <th className="px-3 py-2.5 text-right">Lipsă acum</th>
@@ -1074,6 +1094,13 @@ function NeedTable({ rows, days, onRemove }) {
                     <div className="text-xs text-slate-500">{[r.variant_title, r.sku].filter(Boolean).join(" · ")}{r.status === "DRAFT" && " · Draft"}</div>
                   </div>
                 </div>
+              </td>
+              <td className="px-3 py-2">
+                <select value={r.supplier_id || ""} onChange={(e) => assign(r, e.target.value)}
+                  className={cx("h-9 w-44 rounded-lg border-0 px-2 text-sm ring-1 ring-inset outline-none focus:ring-2 focus:ring-brand", r.supplier_id ? "bg-white ring-slate-300" : "bg-amber-50 text-amber-800 ring-amber-300")}>
+                  <option value="">— fără furnizor —</option>
+                  {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                </select>
               </td>
               <td className="px-3 py-2 text-right"><Qty v={r.on_hand} /></td>
               <td className="px-3 py-2 text-right tabular">{r.reserved || <span className="text-slate-300">0</span>}</td>

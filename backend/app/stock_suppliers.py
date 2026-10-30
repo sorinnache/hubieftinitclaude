@@ -66,7 +66,7 @@ async def needs(_: dict = Depends(get_current_user)):
     for r in rows:
         if r["supplier_id"]:
             by_sup.setdefault(r["supplier_id"], []).append(r)
-        elif r["to_order"] > 0:
+        else:
             unassigned.append(r)
     out = []
     for s in sups:
@@ -85,6 +85,23 @@ class SupplierBody(BaseModel):
     phone: Optional[str] = ""
     email: Optional[str] = ""
     notes: Optional[str] = ""
+
+
+class AssignBody(BaseModel):
+    variant_id: str
+    supplier_id: Optional[str] = None  # None = fără furnizor
+
+
+@router.put("/assign")
+async def assign(body: AssignBody, _: dict = Depends(get_current_user)):
+    db = get_db()
+    if body.supplier_id:
+        if not await db.stock_suppliers.find_one({"id": body.supplier_id}):
+            raise HTTPException(404, "Furnizor inexistent")
+        await db.stock_variants.update_one({"variant_id": body.variant_id}, {"$set": {"supplier_id": body.supplier_id}})
+    else:
+        await db.stock_variants.update_one({"variant_id": body.variant_id}, {"$unset": {"supplier_id": ""}})
+    return {"ok": True}
 
 
 @router.post("")
