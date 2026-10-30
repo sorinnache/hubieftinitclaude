@@ -11,6 +11,7 @@ export default function InventoryRun() {
   const nav = useNavigate();
   const [params] = useSearchParams();
   const onlyNew = params.get("nou") === "1";
+  const checkMode = params.get("verificare") === "1";
   const toast = useToast();
   const { isAdmin } = useAuth();
   const [sess, setSess] = useState(undefined);
@@ -23,7 +24,7 @@ export default function InventoryRun() {
   const firstOpen = (s) => s.items.findIndex((i) => i.counted === null);
 
   useEffect(() => {
-    api("/stock/inventory/session", { method: "POST", body: { scope: onlyNew ? "new" : "full" } })
+    api("/stock/inventory/session", { method: "POST", body: { scope: onlyNew ? "new" : checkMode ? "check" : "full" } })
       .then((r) => { setSess(r.session); const f = firstOpen(r.session); setIdx(f === -1 ? r.session.items.length : f); })
       .catch((e) => { toast.error(e.message); nav("/stocuri?tab=inventar"); });
   }, []); // eslint-disable-line
@@ -34,11 +35,12 @@ export default function InventoryRun() {
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [idx, item?.variant_id]); // eslint-disable-line
 
-  const save = async () => {
-    if (val === "" || !/^\d+$/.test(val)) { toast.error("Scrie cantitatea găsită (0 dacă nu există niciun produs)"); inputRef.current?.focus(); return; }
+  const save = async (forced) => {
+    const v = forced !== undefined ? String(forced) : val;
+    if (v === "" || !/^\d+$/.test(v)) { toast.error("Scrie cantitatea găsită (0 dacă nu există niciun produs)"); inputRef.current?.focus(); return; }
     setBusy(true);
     try {
-      const r = await api("/stock/inventory/session/count", { method: "POST", body: { variant_id: item.variant_id, counted: Number(val) } });
+      const r = await api("/stock/inventory/session/count", { method: "POST", body: { variant_id: item.variant_id, counted: Number(v) } });
       setSess(r.session);
       // următorul produs nenumărat după cel curent; dacă nu există, primul nenumărat de la început
       const items = r.session.items;
@@ -52,7 +54,7 @@ export default function InventoryRun() {
     setBusy(true);
     try {
       const r = await api("/stock/inventory/session/finish", { method: "POST" });
-      toast.success(`Inventar finalizat: ${r.products} produse, ${r.changed} cu diferențe`);
+      toast.success(`${sess.scope === "check" ? "Verificare finalizată" : "Inventar finalizat"}: ${r.products} produse, ${r.changed} cu diferențe`);
       nav("/stocuri?tab=stoc");
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -80,7 +82,7 @@ export default function InventoryRun() {
             <X className="h-5 w-5" />
           </button>
           <div className="text-center">
-            <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{sess.scope === "new" ? "Inventar · produse noi" : "Inventar"}</div>
+            <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">{sess.scope === "new" ? "Inventar · produse noi" : sess.scope === "check" ? "Verificare stoc" : "Inventar"}</div>
             <div className="text-lg font-bold tabular">{sess.done} / {sess.total}</div>
           </div>
           <button onClick={() => setList(true)} className="-mr-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100" title="Lista produselor">
@@ -106,7 +108,16 @@ export default function InventoryRun() {
               {item.sku && <span className="font-mono">SKU {item.sku}</span>}
               {item.location && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{item.location}</span>}
             </div>
-            <div className="mt-6 text-sm font-medium text-slate-600">Câte bucăți sunt fizic în depozit?</div>
+            {sess.scope === "check" && (
+              <div className="mt-5 w-full max-w-sm rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+                <div className="text-base text-slate-700">În sistem: <strong className="text-2xl text-slate-900 tabular">{item.on_hand}</strong> buc</div>
+                <div className="mt-1 text-sm font-medium text-slate-600">Sunt {item.on_hand} bucăți în stoc?</div>
+                <Button type="button" size="lg" className="mt-3 h-14 w-full bg-emerald-600 text-lg hover:bg-emerald-700" loading={busy} onClick={() => save(item.on_hand)}>
+                  <CheckCircle2 className="h-5 w-5" /> Da, sunt {item.on_hand}
+                </Button>
+              </div>
+            )}
+            <div className="mt-6 text-sm font-medium text-slate-600">{sess.scope === "check" ? "Nu? Scrie câte sunt de fapt:" : "Câte bucăți sunt fizic în depozit?"}</div>
             <div className="mt-2 flex items-center gap-3">
               <button type="button" onClick={() => step(-1)} className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 active:bg-slate-200"><Minus className="h-7 w-7" /></button>
               <input ref={inputRef} value={val} onChange={(e) => setVal(e.target.value.replace(/\D/g, ""))}
@@ -120,14 +131,14 @@ export default function InventoryRun() {
             <Button type="button" variant="outline" size="lg" className="h-14 px-4" disabled={idx === 0 || busy} onClick={() => setIdx(idx - 1)}>
               <ChevronLeft className="h-5 w-5" />
             </Button>
-            <Button type="submit" size="lg" className="h-14 flex-1 text-lg" loading={busy} disabled={val === ""}>Salvează și continuă</Button>
+            <Button type="submit" size="lg" className="h-14 flex-1 text-lg" loading={busy} disabled={val === ""}>{sess.scope === "check" ? "Salvează cantitatea corectă" : "Salvează și continuă"}</Button>
           </div>
         </form>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col items-center overflow-y-auto px-5 py-8 text-center">
             <CheckCircle2 className="h-16 w-16 text-emerald-500" />
-            <div className="mt-3 text-2xl font-bold">Toate produsele au fost numărate</div>
+            <div className="mt-3 text-2xl font-bold">{sess.scope === "check" ? "Toate produsele au fost verificate" : "Toate produsele au fost numărate"}</div>
             <div className="mt-1 text-sm text-slate-500">{sess.total} produse · {diffs.length} cu diferențe față de sistem</div>
             {diffs.length > 0 && (
               <div className="mt-5 w-full max-w-md divide-y divide-slate-100 rounded-xl text-left ring-1 ring-slate-200">
@@ -145,7 +156,7 @@ export default function InventoryRun() {
             )}
           </div>
           <div className="border-t border-slate-200 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))]">
-            <Button size="lg" className="h-14 w-full text-lg" loading={busy} disabled={!allDone} onClick={finish}>Finalizează inventarul</Button>
+            <Button size="lg" className="h-14 w-full text-lg" loading={busy} disabled={!allDone} onClick={finish}>{sess.scope === "check" ? "Finalizează verificarea" : "Finalizează inventarul"}</Button>
           </div>
         </div>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet, Truck, Copy, Pencil, ChevronDown, ChevronRight } from "lucide-react";
+import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet, Truck, Copy, Pencil, ChevronDown, ChevronRight, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtDateTime, fmtAgo, money } from "../lib/format";
@@ -651,14 +651,16 @@ function GuidedInventoryCard() {
     api("/stock/inventory/session").then((r) => setSess(r.session)).catch(() => setSess(null));
     api("/stock/inventory/sessions").then(setHist).catch(() => {});
   }, []);
-  const last = hist.find((h) => h.status === "done" && h.scope !== "new");
+  const last = hist.find((h) => h.status === "done" && (h.scope || "full") === "full");
+  const lastCheck = hist.find((h) => h.status === "done" && h.scope === "check");
   return (
+    <>
     <Card className="mb-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 text-sm text-slate-600">
           <div className="text-base font-semibold text-slate-900">Inventar complet pe telefon</div>
           <div className="mt-1">Ia telefonul în depozit. Fiecare produs apare pe tot ecranul, pe rând; scrii cantitatea găsită și apeși „Salvează” — apare următorul. Nu se poate sări peste niciun produs, iar inventarul se finalizează doar când toate sunt numărate.</div>
-          {sess && <div className="mt-2 font-medium text-brand">{sess.scope === "new" ? "Inventar produse noi" : "Inventar"} în desfășurare: {sess.done} din {sess.total} produse numărate (pornit de {sess.started_by} la {fmtDateTime(sess.started_at)})</div>}
+          {sess && <div className="mt-2 font-medium text-brand">{sess.scope === "new" ? "Inventar produse noi" : sess.scope === "check" ? "Verificare stoc" : "Inventar"} în desfășurare: {sess.done} din {sess.total} produse numărate (pornit de {sess.started_by} la {fmtDateTime(sess.started_at)})</div>}
           {!sess && last && <div className="mt-2 text-xs text-slate-500">Ultimul inventar complet: {fmtDateTime(last.finished_at)} de {last.finished_by} · {last.summary?.products} produse, {last.summary?.changed} cu diferențe</div>}
         </div>
         <Button size="lg" disabled={sess === undefined} onClick={() => nav("/stocuri/inventar")}>
@@ -666,6 +668,19 @@ function GuidedInventoryCard() {
         </Button>
       </div>
     </Card>
+    <Card className="mb-4 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="min-w-0 text-sm text-slate-600">
+          <div className="text-base font-semibold text-slate-900">Verificare stocuri (renumărare)</div>
+          <div className="mt-1">Pe telefon, în depozit: pentru fiecare produs care a avut mișcări de stoc în ultimele 15 zile apare întrebarea „Sunt X bucăți în stoc?”. Apeși „Da” sau scrii cantitatea corectă. Diferențele se corectează automat.</div>
+          {lastCheck && <div className="mt-2 text-xs text-slate-500">Ultima verificare: {fmtDateTime(lastCheck.finished_at)} de {lastCheck.finished_by} · {lastCheck.summary?.products} produse, {lastCheck.summary?.changed} cu diferențe</div>}
+        </div>
+        <Button size="lg" variant="outline" disabled={sess === undefined} onClick={() => nav(sess ? "/stocuri/inventar" : "/stocuri/inventar?verificare=1")}>
+          <CheckCircle2 className="h-5 w-5" /> {sess?.scope === "check" ? "Continuă verificarea" : "VERIFICARE STOCURI"}
+        </Button>
+      </div>
+    </Card>
+    </>
   );
 }
 

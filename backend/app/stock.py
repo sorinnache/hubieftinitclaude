@@ -1027,10 +1027,18 @@ def _inv_sort_key(v: dict):
     return ((v.get("location") or "~").lower(), (v.get("product_title") or "").lower(), (v.get("variant_title") or "").lower())
 
 
-async def _inv_targets(only_new: bool = False) -> list[dict]:
+CHECK_DAYS = 15  # verificarea de stoc ia produsele cu mișcări în ultimele 15 zile
+
+
+async def _inv_targets(only_new: bool = False, check: bool = False) -> list[dict]:
     db = get_db()
+    extra: dict = NEVER_COUNTED if only_new else {}
+    if check:
+        since = (datetime.now(timezone.utc) - timedelta(days=CHECK_DAYS)).isoformat()
+        moved = await db.stock_movements.distinct("variant_id", {"created_at": {"$gte": since}})
+        extra = {"variant_id": {"$in": moved}}
     vs = await db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
-                                       **NOT_BUNDLE, **(NEVER_COUNTED if only_new else {})}, {"_id": 0}).to_list(20000)
+                                       **NOT_BUNDLE, **extra}, {"_id": 0}).to_list(20000)
     return sorted(vs, key=_inv_sort_key)
 
 
@@ -1043,7 +1051,8 @@ async def _session_view(sess: dict) -> dict:
     targets = await _inv_targets()
     ids = list(sess.get("order") or [])
     known = set(ids)
-    pool = await _inv_targets(only_new=True) if sess.get("scope") == "new" else targets
+    scope = sess.get("scope", "full")
+    pool = await _inv_targets(only_new=True) if scope == "new" else ([] if scope == "check" else targets)
     added = [v["variant_id"] for v in pool if v["variant_id"] not in known]
     if added:  # produse noi apărute în Shopify în timpul inventarului — intră la final
         ids += added
@@ -1061,7 +1070,8 @@ async def _session_view(sess: dict) -> dict:
         c = counts.get(vid)
         items.append({"variant_id": vid, "product_title": v.get("product_title"), "variant_title": v.get("variant_title"),
                       "sku": v.get("sku"), "image": v.get("image"), "location": v.get("location"),
-                      "status": v.get("status"), "counted": c["counted"] if c else None, "before": c.get("before") if c else None,
+                      "status": v.get("status"), "on_hand": int(v.get("on_hand") or 0),
+                      "counted": c["counted"] if c else None, "before": c.get("before") if c else None,
                       "counted_by": c.get("by") if c else None, "counted_at": c.get("at") if c else None})
     done = sum(1 for i in items if i["counted"] is not None)
     return {"id": sess["id"], "status": sess["status"], "started_at": sess["started_at"],
@@ -1077,21 +1087,22 @@ async def get_session(_: dict = Depends(get_current_user)):
 
 class SessionStart(BaseModel):
     note: Optional[str] = ""
-    scope: str = "full"  # full = toate produsele · new = doar produsele la care nu s-a introdus niciodată stoc
+    scope: str = "full"  # full = toate · new = produse fără stoc introdus · check = verificare (mișcări în ultimele 15 zile)
 
 
 @router.post("/inventory/session")
 async def start_session(body: SessionStart, request: Request, user: dict = Depends(get_current_user)):
     sess = await _open_session()
     if not sess:
-        only_new = body.scope == "new"
-        targets = await _inv_targets(only_new=only_new)
+        only_new, check = body.scope == "new", body.scope == "check"
+        targets = await _inv_targets(only_new=only_new, check=check)
         if not targets:
             raise HTTPException(400, "Toate produsele au deja stoc introdus." if only_new
+                                else f"Niciun produs nu a avut mișcări de stoc în ultimele {CHECK_DAYS} zile." if check
                                 else "Nu există produse de numărat. Sincronizează întâi produsele din Shopify.")
         sess = {"id": new_id(), "status": "open", "started_at": now_iso(), "started_by": user["name"],
-                "scope": "new" if only_new else "full",
-                "note": (body.note or "").strip() or ("Produse noi" if only_new else ""),
+                "scope": "new" if only_new else "check" if check else "full",
+                "note": (body.note or "").strip() or ("Produse noi" if only_new else "Verificare stoc" if check else ""),
                 "order": [v["variant_id"] for v in targets], "counts": {}}
         await get_db().stock_inventory_sessions.insert_one(dict(sess))
         await audit.log(resource_type="stock", resource_id=sess["id"], action="stock.inventory_started", actor=user,
@@ -1120,7 +1131,8 @@ async def session_count(body: SessionCount, user: dict = Depends(get_current_use
         await _set_settings(start_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
     before = int(v.get("on_hand") or 0)
     delta = body.counted - before
-    note = f"Inventar {sess['started_at'][:10]}" + (f" — {sess['note']}" if sess.get("note") else "")
+    note = (f"Verificare stoc {sess['started_at'][:10]}" if sess.get("scope") == "check"
+            else f"Inventar {sess['started_at'][:10]}" + (f" — {sess['note']}" if sess.get("note") else ""))
     if delta:
         await move(body.variant_id, delta, "inventar", note=note, actor=user["name"], ref_kind="inventory",
                    ref_id=sess["id"], expand_bundle=False)
