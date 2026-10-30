@@ -105,8 +105,12 @@ async def _allocate(vid: str, delta: int, order_id: str = "") -> list[tuple[str,
     db = get_db()
     v = await _variant(vid)
     comps = (v or {}).get("bundle") or []
+    bundle_key = vid if comps else None
     if not comps:
-        return [(vid, delta, None)]
+        alts = [a for a in (v or {}).get("alternates") or [] if a != vid]
+        if not alts:
+            return [(vid, delta, None)]
+        comps = [{"variant_id": vid, "qty": 1, "alternates": alts}]  # produs simplu cu înlocuitori
     out: list[tuple[str, int, Optional[str]]] = []
     for c in comps:
         cands = _candidates(c)
@@ -128,7 +132,7 @@ async def _allocate(vid: str, delta: int, order_id: str = "") -> list[tuple[str,
         else:
             net = {}
             if order_id:
-                async for m in db.stock_movements.find({"order_id": order_id, "bundle_variant_id": vid,
+                async for m in db.stock_movements.find({"order_id": order_id, "bundle_variant_id": bundle_key,
                                                         "variant_id": {"$in": cands}, "type": {"$in": ORDER_FLOW_TYPES}},
                                                        {"_id": 0, "variant_id": 1, "delta": 1}):
                     net[m["variant_id"]] = net.get(m["variant_id"], 0) - int(m["delta"])
@@ -149,6 +153,7 @@ async def move(vid: str, delta: int, mtype: str, *, ref: str = "", note: str = "
     if not order_id and ref_kind == "order":
         order_id = ref_id
     targets = await _allocate(vid, delta, order_id) if expand_bundle else [(vid, delta, None)]
+    src_is_bundle = bool(((await _variant(vid)) or {}).get("bundle")) if expand_bundle else False
     out = []
     for tvid, tdelta, primary in targets:
         if not tdelta:
@@ -182,7 +187,7 @@ async def move(vid: str, delta: int, mtype: str, *, ref: str = "", note: str = "
                 return_document=True, projection={"_id": 0})
         m = {"id": new_id(), "variant_id": tvid, "delta": tdelta, "type": mtype, "ref": ref, "note": mnote,
              "actor": actor, "ref_kind": ref_kind, "ref_id": ref_id, "on_hand_after": v.get("on_hand", 0),
-             "via_bundle": tvid != vid, "bundle_variant_id": vid if tvid != vid else None,
+             "via_bundle": src_is_bundle and tvid != vid, "bundle_variant_id": vid if src_is_bundle and tvid != vid else None,
              "component_of": primary if primary and primary != tvid else None, "order_id": order_id or None,
              "requested": requested, "shortfall": (requested is not None and requested < 0), "created_at": now_iso()}
         await db.stock_movements.insert_one(dict(m))
@@ -436,7 +441,11 @@ async def reserved_map() -> dict[str, dict]:
             v = await _variant(l["variant_id"])
             comps = (v or {}).get("bundle") or []
             if not comps:
-                add(l["variant_id"], l["unfulfilled"], o)
+                alts = [a for a in (v or {}).get("alternates") or [] if a != l["variant_id"]]
+                if alts:
+                    flexible.append((o, [l["variant_id"], *alts], l["unfulfilled"]))
+                else:
+                    add(l["variant_id"], l["unfulfilled"], o)
                 continue
             for c in comps:
                 q = int(c["qty"]) * l["unfulfilled"]
@@ -605,7 +614,8 @@ async def item_detail(vid: str, _: dict = Depends(get_current_user)):
     reserved = await reserved_map()
     row = _row(v, reserved)
     row["reserved_orders"] = reserved.get(vid, {}).get("orders", [])
-    row["movements"] = await db.stock_movements.find({"variant_id": vid}, {"_id": 0}).sort("created_at", -1).to_list(300)
+    row["movements"] = await _enrich_movements(
+        await db.stock_movements.find({"variant_id": vid}, {"_id": 0}).sort("created_at", -1).to_list(300))
     if v.get("bundle"):
         comps = []
         for c in v["bundle"]:
@@ -618,6 +628,14 @@ async def item_detail(vid: str, _: dict = Depends(get_current_user)):
             comps.append({**c, "alternates": alts, "product_title": cv.get("product_title"), "variant_title": cv.get("variant_title"),
                           "sku": cv.get("sku"), "image": cv.get("image"), "on_hand": int(cv.get("on_hand") or 0)})
         row["bundle_components"] = comps
+    alts = []
+    for a in v.get("alternates") or []:
+        av = await _variant(a) or {}
+        alts.append({"variant_id": a, "product_title": av.get("product_title"), "variant_title": av.get("variant_title"),
+                     "sku": av.get("sku"), "image": av.get("image"), "on_hand": int(av.get("on_hand") or 0)})
+    row["alternates"] = alts
+    row["alternate_for"] = [{"variant_id": x["variant_id"], "title": _title(x)} async for x in db.stock_variants.find(
+        {"alternates": vid, "deleted": {"$ne": True}}, {"_id": 0, "variant_id": 1, "product_title": 1, "variant_title": 1})]
     return row
 
 
@@ -626,10 +644,16 @@ async def movements(type: Optional[str] = None, limit: int = 300, _: dict = Depe
     db = get_db()
     q = {"type": type} if type else {}
     rows = await db.stock_movements.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 2000)).to_list(2000)
+    return await _enrich_movements(rows)
+
+
+async def _enrich_movements(rows: list[dict]) -> list[dict]:
+    db = get_db()
     ids = list({r["variant_id"] for r in rows} | {r["component_of"] for r in rows if r.get("component_of")}
                | {r["bundle_variant_id"] for r in rows if r.get("bundle_variant_id")})
     names = {v["variant_id"]: v async for v in db.stock_variants.find(
-        {"variant_id": {"$in": ids}}, {"_id": 0, "variant_id": 1, "product_title": 1, "variant_title": 1, "sku": 1})}
+        {"variant_id": {"$in": ids}}, {"_id": 0, "variant_id": 1, "product_title": 1, "variant_title": 1, "sku": 1,
+                                        "alternates": 1})}
     for r in rows:
         n = names.get(r["variant_id"], {})
         r["product_title"], r["variant_title"], r["sku"] = n.get("product_title"), n.get("variant_title"), n.get("sku")
@@ -637,6 +661,9 @@ async def movements(type: Optional[str] = None, limit: int = 300, _: dict = Depe
             r["component_of_title"] = _title(names.get(r["component_of"], {}))
         if r.get("bundle_variant_id"):
             r["bundle_title"] = _title(names.get(r["bundle_variant_id"], {}))
+        primary = r.get("component_of") or r["variant_id"]
+        r["swappable"] = (r["type"] == "vanzare" and r["delta"] < 0 and not r.get("swapped_to")
+                          and bool(r.get("bundle_variant_id") or (names.get(primary) or {}).get("alternates")))
     return rows
 
 
@@ -647,16 +674,22 @@ def _title(v: dict) -> str:
 async def _swap_context(mid: str):
     db = get_db()
     m = await db.stock_movements.find_one({"id": mid}, {"_id": 0})
-    if not m or m["type"] != "vanzare" or not m.get("bundle_variant_id") or m["delta"] >= 0:
-        raise HTTPException(400, "Se pot înlocui doar produsele scăzute dintr-un pachet la emiterea AWB-ului.")
+    if not m or m["type"] != "vanzare" or m["delta"] >= 0:
+        raise HTTPException(400, "Se pot înlocui doar produsele scăzute la emiterea AWB-ului.")
     if m.get("swapped_to"):
         raise HTTPException(400, "Această mișcare a fost deja înlocuită. Folosește mișcarea de înlocuire nouă.")
-    b = await _variant(m["bundle_variant_id"])
     primary = m.get("component_of") or m["variant_id"]
-    comp = next((c for c in (b or {}).get("bundle") or [] if c["variant_id"] == primary), None)
-    if not comp:
-        raise HTTPException(400, "Componenta nu mai există în pachet.")
-    return m, b, comp
+    if m.get("bundle_variant_id"):
+        b = await _variant(m["bundle_variant_id"])
+        comp = next((c for c in (b or {}).get("bundle") or [] if c["variant_id"] == primary), None)
+        if not comp:
+            raise HTTPException(400, "Componenta nu mai există în pachet.")
+        return m, b, comp
+    pv = await _variant(primary) or {}
+    alts = [a for a in pv.get("alternates") or [] if a != primary]
+    if not alts:
+        raise HTTPException(400, "Produsul nu are înlocuitori setați.")
+    return m, None, {"variant_id": primary, "qty": 1, "alternates": alts}
 
 
 @router.get("/movements/{mid}/swap-options")
@@ -669,7 +702,7 @@ async def swap_options(mid: str, _: dict = Depends(get_current_user)):
         v = await _variant(cid) or {}
         out.append({"variant_id": cid, "title": _title(v), "sku": v.get("sku"), "image": v.get("image"),
                     "on_hand": int(v.get("on_hand") or 0), "primary": cid == comp["variant_id"]})
-    return {"movement": m, "current": _title(await _variant(m["variant_id"]) or {}), "bundle": _title(b or {}),
+    return {"movement": m, "current": _title(await _variant(m["variant_id"]) or {}), "bundle": _title(b) if b else None,
             "options": out}
 
 
@@ -686,7 +719,7 @@ async def swap_movement(mid: str, body: SwapBody, request: Request, user: dict =
         raise HTTPException(400, "Produsul ales nu e principalul sau un înlocuitor al acestei componente.")
     n = -int(m["delta"])
     old, new = await _variant(m["variant_id"]), await _variant(body.variant_id)
-    note = f"S-a trimis „{_title(new)}” în loc de „{_title(old)}” (pachet {_title(b)})"
+    note = f"S-a trimis „{_title(new)}” în loc de „{_title(old)}”" + (f" (pachet {_title(b)})" if b else "")
     common = dict(ref=m.get("ref", ""), note=note, actor=user["name"], ref_kind=m.get("ref_kind", ""),
                   ref_id=m.get("ref_id", ""), expand_bundle=False)
     db = get_db()
@@ -695,7 +728,7 @@ async def swap_movement(mid: str, body: SwapBody, request: Request, user: dict =
         ms = await move(tvid, d, "inlocuire", **common)
         # legăm mișcarea de comandă și de pachet, ca un eventual AWB anulat / retur să revină corect
         await db.stock_movements.update_one({"id": ms[0]["id"]}, {"$set": {
-            "order_id": m.get("order_id"), "bundle_variant_id": m["bundle_variant_id"], "via_bundle": True,
+            "order_id": m.get("order_id"), "bundle_variant_id": m.get("bundle_variant_id"), "via_bundle": bool(b),
             "component_of": comp["variant_id"] if tvid != comp["variant_id"] else None}})
         out += ms
     await db.stock_movements.update_one({"id": mid}, {"$set": {"swapped_to": body.variant_id, "swapped_at": now_iso(),
@@ -849,6 +882,36 @@ async def set_bundle(vid: str, body: BundleBody, request: Request, user: dict = 
                    actor=user["name"], expand_bundle=False)
     await audit.log(resource_type="stock", resource_id=vid, action="stock.bundle", actor=user,
                     details={"product": v.get("product_title"), "components": comps}, ip=audit.client_ip(request))
+    return await item_detail(vid, user)
+
+
+class AlternatesBody(BaseModel):
+    alternates: list[str] = []
+
+
+@router.put("/items/{vid}/alternates")
+async def set_alternates(vid: str, body: AlternatesBody, request: Request, user: dict = Depends(get_current_user)):
+    """Produse echivalente: dacă produsul e la 0, la AWB se scade din primul înlocuitor care are stoc."""
+    db = get_db()
+    v = await _variant(vid)
+    if not v:
+        raise HTTPException(404, "Produs inexistent")
+    if is_bundle(v):
+        raise HTTPException(400, "La pachete înlocuitorii se pun pe fiecare componentă.")
+    alts = []
+    for a in body.alternates:
+        if a == vid or a in alts:
+            continue
+        av = await _variant(a)
+        if not av:
+            raise HTTPException(400, "Înlocuitor inexistent")
+        if is_bundle(av):
+            raise HTTPException(400, "Un înlocuitor nu poate fi pachet")
+        alts.append(a)
+    await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"alternates": alts}})
+    await audit.log(resource_type="stock", resource_id=vid, action="stock.alternates", actor=user,
+                    details={"product": _title(v), "alternates": [_title(await _variant(a) or {}) for a in alts]},
+                    ip=audit.client_ip(request))
     return await item_detail(vid, user)
 
 

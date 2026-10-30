@@ -368,6 +368,8 @@ function ItemModal({ vid, onClose, onChanged }) {
             </div>}
           </div>
 
+          {!d.is_bundle && <AlternatesBox d={d} vid={vid} onSaved={() => { load(); onChanged(); }} />}
+
           <label className="flex items-start gap-2 rounded-xl p-4 text-sm ring-1 ring-slate-200">
             <input type="checkbox" className="mt-0.5 accent-brand" checked={!!d.untracked} onChange={async (e) => {
               try { await api(`/stock/items/${vid}`, { method: "PATCH", body: { untracked: e.target.checked } }); load(); onChanged(); }
@@ -390,10 +392,52 @@ function ItemModal({ vid, onClose, onChanged }) {
   );
 }
 
+function AlternatesBox({ d, vid, onSaved }) {
+  const toast = useToast();
+  const [list, setList] = useState((d.alternates || []).map((a) => ({ ...a })));
+  const [adding, setAdding] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setList((d.alternates || []).map((a) => ({ ...a }))); }, [d]);
+  const dirty = JSON.stringify(list.map((a) => a.variant_id)) !== JSON.stringify((d.alternates || []).map((a) => a.variant_id));
+  const save = async () => {
+    setBusy(true);
+    try { await api(`/stock/items/${vid}/alternates`, { method: "PUT", body: { alternates: list.map((a) => a.variant_id) } }); toast.success("Înlocuitori salvați"); onSaved(); }
+    catch (e) { toast.error(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-xl p-4 ring-1 ring-slate-200">
+      <div className="mb-1 text-sm font-semibold">Produse înlocuitoare</div>
+      <p className="mb-3 text-xs text-slate-500">Produse identice, cu alt SKU. Dacă acest produs e la 0, la AWB se scade automat din primul înlocuitor care are stoc (și rezervarea merge tot acolo). Dacă depozitul trimite altul, corectezi din „Istoric mișcări” cu „S-a trimis alt produs”.</p>
+      {d.alternate_for?.length > 0 && <p className="mb-3 text-xs font-medium text-fuchsia-700">Acest produs este înlocuitor pentru: {d.alternate_for.map((x) => x.title).join(", ")}</p>}
+      {list.map((a, k) => (
+        <div key={a.variant_id} className="mb-2 flex items-center gap-3 rounded-lg bg-slate-50 p-2">
+          <span className="shrink-0 rounded bg-fuchsia-50 px-1.5 py-0.5 text-xs font-semibold text-fuchsia-700">Înlocuitor {list.length > 1 ? k + 1 : ""}</span>
+          <Thumb src={a.image} />
+          <div className="min-w-0 flex-1">
+            <div className="line-clamp-2 text-sm font-medium">{productName(a)}</div>
+            <div className="text-xs text-slate-500">{a.sku || "fără SKU"} · în depozit {a.on_hand}</div>
+          </div>
+          <button onClick={() => setList(list.filter((_, j) => j !== k))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+        </div>
+      ))}
+      {adding ? (
+        <div className="flex items-center gap-2">
+          <div className="flex-1"><ProductPicker placeholder="Caută produsul identic (alt SKU)…" exclude={[vid, ...list.map((a) => a.variant_id)]}
+            onPick={(r) => { setList([...list, { variant_id: r.variant_id, product_title: r.product_title, variant_title: r.variant_title, sku: r.sku, image: r.image, on_hand: r.on_hand }]); setAdding(false); }} /></div>
+          <button onClick={() => setAdding(false)} className="rounded p-1.5 text-slate-400 hover:bg-slate-200"><X className="h-4 w-4" /></button>
+        </div>
+      ) : (
+        <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-xs font-medium text-fuchsia-700 hover:underline"><Plus className="h-3.5 w-3.5" /> Adaugă înlocuitor</button>
+      )}
+      {dirty && <div className="mt-3 flex justify-end"><Button size="sm" onClick={save} loading={busy}>Salvează înlocuitorii</Button></div>}
+    </div>
+  );
+}
+
 function MovementRow({ m, showProduct, onChanged }) {
   const t = TYPES[m.type] || { label: m.type, cls: "bg-slate-100 text-slate-600 ring-slate-200" };
   const [swap, setSwap] = useState(false);
-  const canSwap = m.type === "vanzare" && m.bundle_variant_id && m.delta < 0 && !m.swapped_to;
+  const canSwap = m.swappable;
   const info = [m.ref, m.note, m.component_of_title && `înlocuitor pentru ${m.component_of_title}`,
     m.via_bundle && (m.bundle_title ? `din pachetul ${m.bundle_title}` : "din pachet"),
     m.swapped_to && "înlocuit ulterior"].filter(Boolean).join(" · ");
@@ -434,7 +478,7 @@ function SwapModal({ m, onClose, onDone }) {
     <Modal open onClose={onClose} title="Ce produs s-a trimis efectiv?">
       {!d ? <PageLoader /> : (
         <div className="space-y-3 text-sm">
-          <p className="text-slate-600">Comanda <strong>{m.ref}</strong> · pachetul <strong>{d.bundle}</strong>. Sistemul a scăzut <strong>{-m.delta} × {d.current}</strong>. Alege produsul care a plecat de fapt:</p>
+          <p className="text-slate-600">Comanda <strong>{m.ref}</strong>{d.bundle && <> · pachetul <strong>{d.bundle}</strong></>}. Sistemul a scăzut <strong>{-m.delta} × {d.current}</strong>. Alege produsul care a plecat de fapt:</p>
           {d.options.length === 0 ? <div className="text-slate-500">Componenta nu are înlocuitori setați.</div> : d.options.map((o) => (
             <button key={o.variant_id} disabled={!!busy} onClick={() => pick(o.variant_id)}
               className="flex w-full items-center gap-3 rounded-lg p-2 text-left ring-1 ring-slate-200 hover:bg-slate-50 disabled:opacity-50">
