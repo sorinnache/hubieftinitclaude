@@ -16,6 +16,7 @@ import InventoryRun from "./pages/InventoryRun";
 import Profit from "./pages/Profit";
 import Livrari from "./pages/Livrari";
 import ReceiveRun from "./pages/ReceiveRun";
+import Depot from "./pages/Depot";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -49,6 +50,7 @@ function App() {
       <Route path="/stocuri/intrare" element={<ProtectedBare><ReceiveRun /></ProtectedBare>} />
       <Route path="/stocuri/inventar" element={<ProtectedBare><InventoryRun /></ProtectedBare>} />
       <Route path="/stocuri" element={<Protected><Stock /></Protected>} />
+      <Route path="/depozit" element={<Protected><Depot /></Protected>} />
       <Route path="/profit" element={<Protected><Profit /></Protected>} />
       <Route path="/livrari" element={<Protected><Livrari /></Protected>} />
       <Route path="/istoric" element={<Protected><Activity /></Protected>} />
