@@ -18,6 +18,7 @@ import Livrari from "./pages/Livrari";
 import ReceiveRun from "./pages/ReceiveRun";
 import Depot from "./pages/Depot";
 import Dashboard from "./pages/Dashboard";
+import RefusedRun from "./pages/RefusedRun";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
 
@@ -49,6 +50,7 @@ function App() {
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
       <Route path="/service/:id" element={<Protected><ServiceDetail /></Protected>} />
+      <Route path="/stocuri/refuzate" element={<ProtectedBare><RefusedRun /></ProtectedBare>} />
       <Route path="/stocuri/intrare" element={<ProtectedBare><ReceiveRun /></ProtectedBare>} />
       <Route path="/stocuri/inventar" element={<ProtectedBare><InventoryRun /></ProtectedBare>} />
       <Route path="/stocuri" element={<Protected><Stock /></Protected>} />

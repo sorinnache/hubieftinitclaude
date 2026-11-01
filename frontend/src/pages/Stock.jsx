@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet, Truck, Copy, Pencil, ChevronDown, ChevronRight, CheckCircle2 } from "lucide-react";
+import { Search, RefreshCw, Package, AlertTriangle, Boxes, ClipboardList, Plus, Trash2, Layers, X, Coins, ExternalLink, Download, FileSpreadsheet, Truck, Copy, Pencil, ChevronDown, ChevronRight, CheckCircle2, ScanLine, Undo2 } from "lucide-react";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { fmtDateTime, fmtAgo, money } from "../lib/format";
@@ -26,6 +26,7 @@ const TABS = [
   { id: "valoare", label: "Valoare stoc" },
   { id: "istoric", label: "Istoric stocuri" },
   { id: "intrari", label: "Intrări marfă" },
+  { id: "refuzate", label: "Colete refuzate" },
   { id: "furnizori", label: "Necesar furnizori" },
   { id: "miscari", label: "Mișcări" },
   { id: "saft", label: "SAF-T ANAF", admin: true },
@@ -85,6 +86,7 @@ export default function Stock() {
       {tab === "valoare" && <StockValue />}
       {tab === "istoric" && <StockHistory />}
       {tab === "intrari" && <Receipts />}
+      {tab === "refuzate" && <RefusedTab />}
       {tab === "furnizori" && <SupplierNeeds />}
       {tab === "miscari" && <Movements />}
       {tab === "saft" && <SaftStocks />}
@@ -1272,5 +1274,58 @@ function SupplierModal({ s, onClose, onSaved }) {
         <Field label="Observații"><Textarea rows={2} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} placeholder="ex. termen livrare 2 zile, comandă minimă" /></Field>
       </div>
     </Modal>
+  );
+}
+
+
+function RefusedTab() {
+  const toast = useToast();
+  const nav = useNavigate();
+  const { isAdmin } = useAuth();
+  const [d, setD] = useState(null);
+  const load = () => api("/stock/refused?days=30").then(setD).catch((e) => toast.error(e.message));
+  useEffect(() => { load(); }, []); // eslint-disable-line
+  const undo = async (r) => {
+    if (!window.confirm(`Anulezi recepția pentru ${r.order_name}? Produsele (${r.units} buc) se scad înapoi din stoc.`)) return;
+    try { await api(`/stock/refused/${r.id}/undo`, { method: "POST" }); toast.success("Recepție anulată"); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+  return (
+    <div>
+      <Card className="mb-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0 text-sm text-slate-600">
+            <div className="text-base font-semibold text-slate-900">Recepție colete refuzate cu scannerul</div>
+            <div className="mt-1">Când curierul aduce coletele refuzate: deschizi ecranul de scanare și scanezi codul de bare de pe AWB. Produsele care au plecat în acel colet revin automat în stoc. Fiecare comandă se poate recepționa o singură dată.</div>
+            {d && <div className="mt-2 font-medium text-slate-800">Azi: {d.today_parcels} colete · {d.today_units} produse readăugate</div>}
+          </div>
+          <Button size="lg" onClick={() => nav("/stocuri/refuzate")}><ScanLine className="h-5 w-5" /> Scanează colete refuzate</Button>
+        </div>
+      </Card>
+      {!d ? <PageLoader /> : d.items.length === 0 ? <Card><Empty icon={ScanLine} title="Niciun colet refuzat recepționat în ultimele 30 de zile" /></Card> : (
+        <Card className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                  <th className="px-4 py-3">Data</th><th className="px-4 py-3">Comanda / AWB</th><th className="px-4 py-3">Produse readăugate</th><th className="px-4 py-3">Cine</th><th className="w-10" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {d.items.map((r) => (
+                  <tr key={r.id} className={cx(r.undone && "opacity-50")}>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{fmtDateTime(r.created_at)}</td>
+                    <td className="px-4 py-2.5"><div className="font-semibold">{r.order_name}</div><div className="font-mono text-xs text-slate-500">{r.awb}</div>{r.customer && <div className="text-xs text-slate-400">{r.customer}{r.city ? `, ${r.city}` : ""}</div>}</td>
+                    <td className="px-4 py-2.5">{r.lines.map((l) => <div key={l.movement_id}><strong className="text-emerald-700">+{l.qty}</strong> {l.title}</div>)}{r.undone && <div className="text-xs font-medium text-red-600">anulată de {r.undone_by}</div>}</td>
+                    <td className="px-4 py-2.5 text-slate-500">{r.by}</td>
+                    <td className="px-2">{isAdmin && !r.undone && <button title="Anulează (scanat din greșeală)" onClick={() => undo(r)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Undo2 className="h-4 w-4" /></button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }

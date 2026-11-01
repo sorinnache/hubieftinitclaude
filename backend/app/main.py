@@ -7,7 +7,7 @@ from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import admin, auth, cases, config, dashboard, deliveries, depot, public, shipments, profit, saft, shopify, stock, stock_reports, stock_suppliers
+from . import admin, auth, cases, config, dashboard, deliveries, depot, public, refused, shipments, profit, saft, shopify, stock, stock_reports, stock_suppliers
 from .db import ensure_indexes
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,6 +45,7 @@ api.include_router(admin.router)
 api.include_router(shopify.router)
 api.include_router(stock_reports.router)
 api.include_router(stock_suppliers.router)
+api.include_router(refused.router)
 api.include_router(profit.router)
 api.include_router(deliveries.router)
 api.include_router(depot.router)
