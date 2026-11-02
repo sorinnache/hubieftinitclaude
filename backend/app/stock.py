@@ -401,6 +401,7 @@ async def sync_all(products: bool = False) -> dict:
         # curățenie: comenzile vechi și închise nu mai contează pentru rezervări
         old = (datetime.now(timezone.utc) - timedelta(days=RESERVE_WINDOW_DAYS + 15)).isoformat()
         await get_db().stock_orders.delete_many({"created_at": {"$lt": old}, "reserving": False})
+        await _set_settings(last_error=None, last_error_at=None)  # sincronizare reușită: ștergem eroarea veche
         return out
 
 

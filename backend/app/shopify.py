@@ -79,19 +79,21 @@ async def graphql(query: str, variables: dict | None = None) -> dict:
                                headers={"X-Shopify-Access-Token": token, "Content-Type": "application/json"})
         if r.status_code == 401:
             _cc_cache["token"] = None
-        if r.status_code in (429, 502, 503):
+        if r.status_code in (429, 500, 502, 503, 504):
             await asyncio.sleep(2 + attempt * 2)
             continue
         r.raise_for_status()
         data = r.json()
         errs = data.get("errors") or []
-        if errs and any((e.get("extensions") or {}).get("code") == "THROTTLED" for e in errs if isinstance(e, dict)):
+        # THROTTLED = prea multe cereri; INTERNAL_SERVER_ERROR = eroare temporară la Shopify — reîncercăm
+        if errs and any((e.get("extensions") or {}).get("code") in ("THROTTLED", "INTERNAL_SERVER_ERROR")
+                        for e in errs if isinstance(e, dict)):
             await asyncio.sleep(2 + attempt * 2)
             continue
         if errs:
             raise RuntimeError(f"Shopify: {str(errs)[:300]}")
         return data["data"]
-    raise RuntimeError("Shopify: prea multe cereri, reîncearcă")
+    raise RuntimeError("Shopify nu a răspuns după 5 încercări (eroare temporară la Shopify). Se reîncearcă automat.")
 
 
 ORDER_QUERY = """
