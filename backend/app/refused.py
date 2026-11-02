@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from . import audit
+from . import audit, profit
 from .auth import get_current_user, require_admin
 from .db import get_db, new_id, now_iso
 from .stock import _title, _variant, move
@@ -22,16 +22,19 @@ TZ = ZoneInfo("Europe/Bucharest")
 
 
 def _variants_of_code(code: str) -> list[str]:
-    """Codul de bare GLS poate conține și o cifră de control: încercăm și fără ea."""
+    """Codul de bare GLS conține AWB-ul (10 cifre) cu zerouri / cifră de control în jur
+    (ex. 062545371600 → AWB 6254537160). Încercăm codul întreg și toate secvențele de 10–11 cifre din el."""
     c = re.sub(r"\s+", "", code or "").strip()
     out = [c]
-    if c.isdigit() and len(c) >= 11:
-        out.append(c[:-1])
-    for m in re.findall(r"\d{10,12}", c):  # cod de bare cu prefix / alte date în jurul AWB-ului
-        out += [m, m[:-1], m[:10]]
+    for digits in re.findall(r"\d+", c):
+        out.append(digits)
+        out.append(digits.lstrip("0"))
+        for n in (10, 11):
+            for k in range(0, max(0, len(digits) - n) + 1):
+                out.append(digits[k:k + n])
     seen, res = set(), []
     for x in out:
-        if x and x not in seen:
+        if x and len(x) >= 6 and x not in seen:
             seen.add(x)
             res.append(x)
     return res
@@ -39,18 +42,27 @@ def _variants_of_code(code: str) -> list[str]:
 
 async def _find_order(code: str) -> tuple[Optional[dict], Optional[str]]:
     db = get_db()
-    for c in _variants_of_code(code):
-        o = await db.profit_orders.find_one({"fulfillments.awbs": c}, {"_id": 0})
+    cands = _variants_of_code(code)
+    o = await db.profit_orders.find_one({"fulfillments.awbs": {"$in": cands}}, {"_id": 0})
+    if o:
+        awb = next((a for f in o.get("fulfillments") or [] for a in f.get("awbs") or [] if a in cands), cands[0])
+        return o, awb
+    p = await db.depot_parcels.find_one({"awb": {"$in": cands}}, {"_id": 0, "order_id": 1, "awb": 1})
+    if p:
+        o = await db.profit_orders.find_one({"order_id": p["order_id"]}, {"_id": 0})
         if o:
-            return o, c
-        p = await db.depot_parcels.find_one({"awb": c}, {"_id": 0, "order_id": 1})
-        if p:
-            o = await db.profit_orders.find_one({"order_id": p["order_id"]}, {"_id": 0})
-            if o:
-                return o, c
-        s = await db.shipments.find_one({"awb": c}, {"_id": 0, "ref_id": 1})
-        if s:
-            return None, "retur"
+            return o, p["awb"]
+    if await db.shipments.find_one({"awb": {"$in": cands}}, {"_id": 1}):
+        return None, "retur"
+    # nu e încă în hub: căutăm direct în Shopify după numărul AWB (căutarea Shopify include tracking-ul)
+    for c in [x for x in cands if x.isdigit() and 10 <= len(x) <= 11][:4]:
+        try:
+            if await profit._fetch(c):
+                o = await db.profit_orders.find_one({"fulfillments.awbs": c}, {"_id": 0})
+                if o:
+                    return o, c
+        except Exception:  # noqa: BLE001
+            break
     return None, None
 
 
