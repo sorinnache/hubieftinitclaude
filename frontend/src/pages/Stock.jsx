@@ -1077,111 +1077,171 @@ function StockHistory() {
 function SupplierNeeds() {
   const toast = useToast();
   const [d, setD] = useState(null);
-  const [edit, setEdit] = useState(null); // {id?, name, ...}
-  const [onlyNeeded, setOnlyNeeded] = useState(false);
-  const [showAllUn, setShowAllUn] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [mode, setMode] = useState("need"); // need = doar ce trebuie comandat · all = toate produsele
+  const [sel, setSel] = useState("all"); // furnizorul filtrat
+  const [q, setQ] = useState("");
   const load = () => api("/stock/suppliers").then(setD).catch((e) => toast.error(e.message));
   useEffect(() => { load(); }, []); // eslint-disable-line
+
+  const view = useMemo(() => {
+    if (!d) return null;
+    const s = q.trim().toLowerCase();
+    const match = (r) => !s || `${r.product_title} ${r.variant_title} ${r.sku}`.toLowerCase().includes(s);
+    const keep = (r) => (mode === "all" || r.to_order > 0) && match(r);
+    const groups = [
+      ...(d.unassigned.length ? [{ id: "__none", name: "Fără furnizor", unassigned: true, items: d.unassigned }] : []),
+      ...d.suppliers,
+    ].map((g) => ({ ...g, rows: g.items.filter(keep), need: g.items.reduce((a, r) => a + r.to_order, 0), needLines: g.items.filter((r) => r.to_order > 0).length,
+      short: g.items.reduce((a, r) => a + r.short_now, 0) }));
+    groups.sort((a, b) => ((b.unassigned ? 1 : 0) - (a.unassigned ? 1 : 0)) || (b.need - a.need) || a.name.localeCompare(b.name));
+    const all = groups.flatMap((g) => g.items);
+    return {
+      groups,
+      totals: {
+        units: all.reduce((a, r) => a + r.to_order, 0),
+        lines: all.filter((r) => r.to_order > 0).length,
+        shortUnits: all.reduce((a, r) => a + r.short_now, 0),
+        shortLines: all.filter((r) => r.short_now > 0).length,
+        suppliers: groups.filter((g) => !g.unassigned && g.need > 0).length,
+        unassigned: (groups.find((g) => g.unassigned)?.needLines) || 0,
+      },
+    };
+  }, [d, mode, q]);
   if (!d) return <PageLoader />;
-  const totalOrder = d.suppliers.reduce((a, s) => a + s.to_order, 0) + d.unassigned.reduce((a, r) => a + r.to_order, 0);
-  const unNeeded = d.unassigned.filter((r) => r.to_order > 0);
-  const unRows = showAllUn ? d.unassigned : unNeeded;
+  const shown = view.groups.filter((g) => (sel === "all" || g.id === sel) && (g.rows.length || (!q && mode === "all" && !g.unassigned)));
+
   return (
     <div>
-      <Card className="mb-4 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0 text-sm text-slate-600">
-            <div className="text-base font-semibold text-slate-900">Ce trebuie comandat de la furnizori</div>
-            <div className="mt-1"><strong>Lipsă acum</strong> = rezervat − în depozit. <strong>Estimare {d.window_days} zile</strong> = câte bucăți s-au comandat în ultimele {d.window_days} zile (comenzi neanulate), proiectat pe următoarele {d.window_days} zile. <strong>De comandat</strong> = rezervat + estimare − în depozit.</div>
+      {/* 1. Rezumat: ce contează la o privire */}
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <NeedKpi label="De comandat" value={view.totals.units} unit="buc" sub={`${view.totals.lines} ${view.totals.lines === 1 ? "produs" : "produse"}`} tone="brand" />
+        <NeedKpi label="Lipsă acum" value={view.totals.shortUnits} unit="buc" sub={`${view.totals.shortLines} produse cu comenzi fără stoc`} tone={view.totals.shortUnits ? "red" : "ok"} />
+        <NeedKpi label="Furnizori de contactat" value={view.totals.suppliers} sub={`din ${d.suppliers.length} furnizori`} />
+        <NeedKpi label="Fără furnizor" value={view.totals.unassigned} sub="produse de comandat nealocate" tone={view.totals.unassigned ? "amber" : "ok"} />
+      </div>
+
+      {/* 2. Filtre */}
+      <Card className="mb-4 p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-lg bg-slate-100 p-1" role="tablist">
+            {[["need", "Doar de comandat"], ["all", "Toate produsele"]].map(([k, l]) => (
+              <button key={k} role="tab" aria-selected={mode === k} onClick={() => setMode(k)}
+                className={cx("h-8 cursor-pointer rounded-md px-3 text-sm font-medium transition-colors", mode === k ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-800")}>{l}</button>
+            ))}
           </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="h-4 w-4 accent-brand" checked={onlyNeeded} onChange={(e) => setOnlyNeeded(e.target.checked)} /> Doar ce trebuie comandat</label>
-            <Button onClick={() => setEdit({ name: "", contact: "", phone: "", email: "", notes: "" })}><Plus className="h-4 w-4" /> Furnizor nou</Button>
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Caută produs sau SKU…" className="pl-9" aria-label="Caută produs" />
           </div>
+          <Button variant="outline" onClick={() => setEdit({ name: "", contact: "", phone: "", email: "", notes: "" })}><Plus className="h-4 w-4" /> Furnizor nou</Button>
         </div>
-        {totalOrder > 0 && <div className="mt-3 text-sm font-medium text-slate-800">Total de comandat acum (cu estimarea pe {d.window_days} zile): <span className="text-brand">{totalOrder} buc</span></div>}
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <SupplierChip active={sel === "all"} onClick={() => setSel("all")} label="Toți furnizorii" n={view.totals.units} />
+          {view.groups.map((g) => (
+            <SupplierChip key={g.id} active={sel === g.id} onClick={() => setSel(sel === g.id ? "all" : g.id)} label={g.name} n={g.need} warn={g.unassigned} />
+          ))}
+        </div>
+        <div className="mt-2 text-xs text-slate-500">
+          <strong>De comandat</strong> = rezervat + estimare {d.window_days} zile − în depozit. Estimarea repetă ce s-a comandat în ultimele {d.window_days} zile.
+        </div>
       </Card>
-      {d.unassigned.length > 0 && (
-        <Card className="mb-4 overflow-hidden ring-amber-200">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 bg-amber-50 px-5 py-3 text-sm">
-            <div className="flex items-center gap-2 font-semibold text-amber-900"><AlertTriangle className="h-4 w-4" />
-              {showAllUn ? `Toate produsele fără furnizor (${d.unassigned.length})` : `Produse de comandat care nu au furnizor setat (${unNeeded.length})`}</div>
-            <button onClick={() => setShowAllUn(!showAllUn)} className="text-xs font-medium text-amber-900 underline">
-              {showAllUn ? "Arată doar ce trebuie comandat" : `Arată toate produsele fără furnizor (${d.unassigned.length})`}
-            </button>
-          </div>
-          {unRows.length > 0 ? <NeedTable rows={unRows} days={d.window_days} suppliers={d.suppliers} onChanged={load} />
-            : <div className="px-5 py-4 text-sm text-slate-500">Toate produsele de comandat au furnizor.</div>}
-        </Card>
-      )}
-      {d.suppliers.length === 0 ? (
-        <Card><Empty icon={Truck} title="Niciun furnizor încă">Apasă „Furnizor nou”, apoi adaugă produsele pe care le iei de la el.</Empty></Card>
-      ) : d.suppliers.map((s) => (
-        <SupplierCard key={s.id} s={s} suppliers={d.suppliers} days={d.window_days} onlyNeeded={onlyNeeded} onEdit={() => setEdit(s)} onChanged={load} />
+
+      {/* 3. Liste pe furnizori */}
+      {shown.length === 0 ? (
+        <Card><Empty icon={CheckCircle2} title={mode === "need" ? "Nimic de comandat acum" : "Niciun produs"}>{mode === "need" ? "Stocul acoperă comenzile rezervate și estimarea pe următoarele zile." : "Adaugă furnizori și produsele lor."}</Empty></Card>
+      ) : shown.map((g) => (
+        <SupplierCard key={g.id} g={g} suppliers={d.suppliers} days={d.window_days} mode={mode} onEdit={() => setEdit(g)} onChanged={load} />
       ))}
       {edit && <SupplierModal s={edit} onClose={() => setEdit(null)} onSaved={() => { setEdit(null); load(); }} />}
     </div>
   );
 }
 
-function SupplierCard({ s, suppliers, days, onlyNeeded, onEdit, onChanged }) {
+function NeedKpi({ label, value, unit, sub, tone }) {
+  const c = { brand: "text-brand", red: "text-red-600", amber: "text-amber-600", ok: "text-emerald-600" }[tone] || "text-slate-900";
+  return (
+    <Card className="p-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className={cx("mt-1 text-3xl font-bold tabular", c)}>{value}{unit && <span className="ml-1 text-base font-semibold text-slate-400">{unit}</span>}</div>
+      <div className="mt-0.5 text-xs text-slate-500">{sub}</div>
+    </Card>
+  );
+}
+
+function SupplierChip({ active, onClick, label, n, warn }) {
+  return (
+    <button onClick={onClick} aria-pressed={active}
+      className={cx("inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full px-3 text-sm ring-1 ring-inset transition-colors",
+        active ? "bg-slate-900 text-white ring-slate-900" : warn ? "bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100" : "bg-white text-slate-700 ring-slate-200 hover:bg-slate-50")}>
+      <span className="max-w-[180px] truncate">{label}</span>
+      <span className={cx("rounded-full px-1.5 text-xs font-semibold tabular", active ? "bg-white/20" : n > 0 ? "bg-brand/10 text-brand" : "bg-slate-100 text-slate-400")}>{n}</span>
+    </button>
+  );
+}
+
+function SupplierCard({ g, suppliers, days, mode, onEdit, onChanged }) {
   const toast = useToast();
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(g.need > 0 || mode === "all");
   const [adding, setAdding] = useState(false);
-  const rows = onlyNeeded ? s.items.filter((r) => r.to_order > 0) : s.items;
   const copy = async () => {
-    const lines = s.items.filter((r) => r.to_order > 0).map((r) => `${r.to_order} buc — ${productName(r)}${r.sku ? ` (${r.sku})` : ""}`);
+    const lines = g.items.filter((r) => r.to_order > 0).map((r) => `${r.to_order} buc — ${productName(r)}${r.sku ? ` (${r.sku})` : ""}`);
     if (!lines.length) { toast.error("Nu e nimic de comandat de la acest furnizor"); return; }
-    const txt = `Comandă ${s.name}:\n` + lines.join("\n");
+    const txt = `Comandă ${g.name}:\n` + lines.join("\n");
     try { await navigator.clipboard.writeText(txt); toast.success("Lista de comandă a fost copiată"); }
     catch { window.prompt("Copiază lista:", txt); }
   };
   const addProduct = async (r) => {
-    try { await api(`/stock/suppliers/${s.id}/products`, { method: "PUT", body: { add: [r.variant_id] } }); onChanged(); }
-    catch (e) { toast.error(e.message); }
-  };
-  const remove = async (r) => {
-    try { await api(`/stock/suppliers/${s.id}/products`, { method: "PUT", body: { remove: [r.variant_id] } }); onChanged(); }
+    try { await api(`/stock/suppliers/${g.id}/products`, { method: "PUT", body: { add: [r.variant_id] } }); onChanged(); }
     catch (e) { toast.error(e.message); }
   };
   return (
-    <Card className="mb-4 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
-        <button onClick={() => setOpen(!open)} className="flex min-w-0 items-center gap-2 text-left">
-          {open ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+    <Card className={cx("mb-3 overflow-hidden", g.unassigned && "ring-amber-200")}>
+      <div className={cx("flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3", g.unassigned ? "bg-amber-50" : "bg-white", open && "border-b border-slate-100")}>
+        <button onClick={() => setOpen(!open)} aria-expanded={open} className="flex min-w-[200px] flex-1 cursor-pointer items-center gap-2 text-left">
+          {open ? <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" /> : <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />}
+          {g.unassigned && <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />}
           <div className="min-w-0">
-            <div className="truncate text-base font-semibold">{s.name}</div>
-            <div className="text-xs text-slate-500">{[s.contact, s.phone, s.email].filter(Boolean).join(" · ") || "fără date de contact"} · {s.products} produse</div>
+            <div className="truncate font-semibold">{g.name}</div>
+            <div className="truncate text-xs text-slate-500">
+              {g.unassigned ? "Alege furnizorul din coloana Furnizor" : [g.contact, g.phone].filter(Boolean).join(" · ") || `${g.products} produse`}
+            </div>
           </div>
         </button>
-        <div className="flex flex-wrap items-center gap-2">
-          {s.to_order > 0
-            ? <span className="rounded-full bg-brand-50 px-3 py-1 text-sm font-semibold text-brand">De comandat: {s.to_order} buc ({s.lines_to_order} produse)</span>
+        <div className="flex items-center gap-2">
+          {g.short > 0 && <span className="whitespace-nowrap rounded-full bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">Lipsă {g.short}</span>}
+          {g.need > 0
+            ? <span className="whitespace-nowrap rounded-full bg-brand px-3 py-1 text-sm font-bold text-white tabular">{g.need} buc · {g.needLines} {g.needLines === 1 ? "produs" : "produse"}</span>
             : <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-medium text-emerald-700">Nimic de comandat</span>}
-          <Button size="sm" variant="outline" onClick={copy}><Copy className="h-3.5 w-3.5" /> Copiază comanda</Button>
-          <Button size="sm" variant="ghost" onClick={onEdit}><Pencil className="h-3.5 w-3.5" /></Button>
+          {!g.unassigned && <>
+            <Button size="sm" variant="outline" onClick={copy} disabled={!g.need}><Copy className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Copiază comanda</span><span className="sm:hidden">Copiază</span></Button>
+            <button onClick={onEdit} aria-label={`Editează ${g.name}`} className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"><Pencil className="h-4 w-4" /></button>
+          </>}
         </div>
       </div>
       {open && (
         <>
-          {rows.length > 0 ? <NeedTable rows={rows} days={days} onRemove={remove} suppliers={suppliers} onChanged={onChanged} /> : <div className="px-5 py-4 text-sm text-slate-500">{s.items.length ? "Nimic de comandat acum." : "Niciun produs adăugat încă."}</div>}
-          <div className="border-t border-slate-100 px-5 py-3">
-            {adding ? (
-              <div className="flex items-center gap-2">
-                <div className="flex-1"><ProductPicker placeholder="Caută produsul pe care îl iei de la acest furnizor…" exclude={s.items.map((r) => r.variant_id)} onPick={addProduct} /></div>
-                <Button size="sm" variant="outline" onClick={() => setAdding(false)}>Gata</Button>
-              </div>
-            ) : (
-              <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-sm font-medium text-brand hover:underline"><Plus className="h-4 w-4" /> Adaugă produse la {s.name}</button>
-            )}
-          </div>
+          {g.rows.length > 0 ? <NeedTable rows={g.rows} days={days} suppliers={suppliers} onChanged={onChanged} groupId={g.unassigned ? null : g.id} />
+            : <div className="px-4 py-3 text-sm text-slate-500">{g.items.length ? "Nimic de comandat acum." : "Niciun produs adăugat încă."}</div>}
+          {!g.unassigned && (
+            <div className="border-t border-slate-100 px-4 py-2.5">
+              {adding ? (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1"><ProductPicker placeholder="Caută produsul pe care îl iei de la acest furnizor…" exclude={g.items.map((r) => r.variant_id)} onPick={addProduct} /></div>
+                  <Button size="sm" variant="outline" onClick={() => setAdding(false)}>Gata</Button>
+                </div>
+              ) : (
+                <button onClick={() => setAdding(true)} className="inline-flex cursor-pointer items-center gap-1 text-sm font-medium text-brand hover:underline"><Plus className="h-4 w-4" /> Adaugă produse la {g.name}</button>
+              )}
+            </div>
+          )}
         </>
       )}
     </Card>
   );
 }
 
-function NeedTable({ rows, days, onRemove, suppliers = [], onChanged }) {
+function NeedTable({ rows, days, suppliers = [], onChanged, groupId }) {
   const toast = useToast();
   const assign = async (r, sid) => {
     try {
@@ -1191,53 +1251,80 @@ function NeedTable({ rows, days, onRemove, suppliers = [], onChanged }) {
       onChanged?.();
     } catch (e) { toast.error(e.message); }
   };
+  const sel = (r, cls) => (
+    <select value={r.supplier_id || ""} onChange={(e) => assign(r, e.target.value)} aria-label={`Furnizor pentru ${r.product_title}`}
+      className={cx("h-9 cursor-pointer rounded-lg border-0 px-2 text-sm ring-1 ring-inset outline-none focus:ring-2 focus:ring-brand", cls, r.supplier_id ? "bg-white text-slate-700 ring-slate-200" : "bg-amber-50 text-amber-800 ring-amber-300")}>
+      <option value="">— fără furnizor —</option>
+      {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+    </select>
+  );
   return (
-    <div className="overflow-x-auto">
+    <>
+    {/* telefon: carduri */}
+    <div className="divide-y divide-slate-100 md:hidden">
+      {rows.map((r) => (
+        <div key={r.variant_id} className="px-4 py-3">
+          <div className="flex items-start gap-3">
+            <Thumb src={r.image} />
+            <div className="min-w-0 flex-1">
+              <div className="line-clamp-2 text-sm font-medium">{r.product_title}</div>
+              <div className="text-xs text-slate-500">{[r.variant_title, r.sku].filter(Boolean).join(" · ")}</div>
+              <div className="mt-1 text-xs text-slate-600">stoc <strong className={r.on_hand <= 0 ? "text-red-600" : ""}>{r.on_hand}</strong> · rezervat <strong className="text-amber-600">{r.reserved}</strong> · {r.per_day}/zi
+                {r.short_now > 0 && <span className="ml-1 font-semibold text-red-700">· lipsă {r.short_now}</span>}</div>
+            </div>
+            {r.to_order > 0
+              ? <span className={cx("shrink-0 rounded-lg px-2.5 py-1 text-lg font-bold tabular", r.short_now > 0 ? "bg-red-600 text-white" : "bg-brand/10 text-brand")}>{r.to_order}</span>
+              : <span className="shrink-0 text-slate-300">—</span>}
+          </div>
+          <div className="mt-2">{sel(r, "w-full")}</div>
+        </div>
+      ))}
+    </div>
+    <div className="hidden overflow-x-auto md:block">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-200 bg-slate-50/60 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-            <th className="px-4 py-2.5">Produs</th>
-            <th className="px-3 py-2.5">Furnizor</th>
-            <th className="px-3 py-2.5 text-right">În depozit</th>
-            <th className="px-3 py-2.5 text-right">Rezervat</th>
-            <th className="px-3 py-2.5 text-right">Lipsă acum</th>
-            <th className="px-3 py-2.5 text-right">Comandat ultimele {days} zile</th>
-            <th className="px-3 py-2.5 text-right">Estimare {days} zile</th>
-            <th className="px-3 py-2.5 text-right">De comandat</th>
-            {onRemove && <th className="w-10" />}
+          <tr className="border-b border-slate-200 bg-slate-50/70 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+            <th className="px-4 py-2">Produs</th>
+            <th className="w-28 whitespace-nowrap px-3 py-2 text-center">De comandat</th>
+            <th className="hidden whitespace-nowrap px-3 py-2 text-right md:table-cell">Stoc / Rezervat</th>
+            <th className="hidden whitespace-nowrap px-3 py-2 text-right lg:table-cell">Ritm vânzare</th>
+            <th className="px-3 py-2">Furnizor</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-100">
           {rows.map((r) => (
-            <tr key={r.variant_id} className={cx(r.to_order > 0 && "bg-brand-50/30")}>
+            <tr key={r.variant_id} className="hover:bg-slate-50/70">
               <td className="px-4 py-2">
                 <div className="flex items-center gap-3">
                   <Thumb src={r.image} />
                   <div className="min-w-0">
-                    <div className="line-clamp-2 font-medium">{r.product_title}</div>
-                    <div className="text-xs text-slate-500">{[r.variant_title, r.sku].filter(Boolean).join(" · ")}{r.status === "DRAFT" && " · Draft"}</div>
+                    <div className="line-clamp-1 font-medium" title={r.product_title}>{r.product_title}</div>
+                    <div className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
+                      <span>{[r.variant_title, r.sku].filter(Boolean).join(" · ")}{r.status === "DRAFT" && " · Draft"}</span>
+                      {r.short_now > 0 && <span className="rounded bg-red-50 px-1.5 font-semibold text-red-700 ring-1 ring-inset ring-red-200">lipsă acum {r.short_now}</span>}
+                    </div>
                   </div>
                 </div>
               </td>
-              <td className="px-3 py-2">
-                <select value={r.supplier_id || ""} onChange={(e) => assign(r, e.target.value)}
-                  className={cx("h-9 w-44 rounded-lg border-0 px-2 text-sm ring-1 ring-inset outline-none focus:ring-2 focus:ring-brand", r.supplier_id ? "bg-white ring-slate-300" : "bg-amber-50 text-amber-800 ring-amber-300")}>
-                  <option value="">— fără furnizor —</option>
-                  {suppliers.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-                </select>
+              <td className="px-3 py-2 text-center">
+                {r.to_order > 0
+                  ? <span className={cx("inline-flex min-w-[3rem] justify-center rounded-lg px-2 py-1 text-lg font-bold tabular", r.short_now > 0 ? "bg-red-600 text-white" : "bg-brand/10 text-brand")}>{r.to_order}</span>
+                  : <span className="text-slate-300">—</span>}
               </td>
-              <td className="px-3 py-2 text-right"><Qty v={r.on_hand} /></td>
-              <td className="px-3 py-2 text-right tabular">{r.reserved || <span className="text-slate-300">0</span>}</td>
-              <td className={cx("px-3 py-2 text-right tabular", r.short_now > 0 ? "font-semibold text-red-600" : "text-slate-300")}>{r.short_now}</td>
-              <td className="px-3 py-2 text-right tabular text-slate-600">{r.sold_window}<div className="text-[11px] text-slate-400">{r.per_day}/zi</div></td>
-              <td className="px-3 py-2 text-right tabular text-slate-600">{r.forecast}</td>
-              <td className={cx("px-3 py-2 text-right text-base tabular", r.to_order > 0 ? "font-bold text-brand" : "text-slate-300")}>{r.to_order}</td>
-              {onRemove && <td className="px-2"><button title="Scoate de la acest furnizor" onClick={() => onRemove(r)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button></td>}
+              <td className="hidden whitespace-nowrap px-3 py-2 text-right tabular md:table-cell">
+                <span className={cx(r.on_hand <= 0 ? "font-semibold text-red-600" : "text-slate-800")}>{r.on_hand}</span>
+                <span className="text-slate-300"> / </span><span className="text-amber-600">{r.reserved}</span>
+              </td>
+              <td className="hidden whitespace-nowrap px-3 py-2 text-right text-slate-600 tabular lg:table-cell" title={`${r.sold_window} buc comandate în ultimele ${days} zile`}>
+                {r.per_day}<span className="text-xs text-slate-400">/zi</span>
+              </td>
+              <td className="px-3 py-2">{sel(r, "w-40")}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
