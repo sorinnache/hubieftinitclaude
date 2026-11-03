@@ -1379,16 +1379,19 @@ function RefusedTab() {
   };
   return (
     <div>
-      <Card className="mb-4 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="min-w-0 text-sm text-slate-600">
-            <div className="text-base font-semibold text-slate-900">Recepție colete refuzate cu scannerul</div>
-            <div className="mt-1">Când curierul aduce coletele refuzate: deschizi ecranul de scanare și scanezi codul de bare de pe AWB. Produsele care au plecat în acel colet revin automat în stoc. Fiecare comandă se poate recepționa o singură dată.</div>
-            {d && <div className="mt-2 font-medium text-slate-800">Azi: {d.today_parcels} colete · {d.today_units} produse readăugate</div>}
-          </div>
-          <Button size="lg" onClick={() => nav("/stocuri/refuzate")}><ScanLine className="h-5 w-5" /> Scanează colete refuzate</Button>
-        </div>
-      </Card>
+      <button onClick={() => nav("/stocuri/refuzate")}
+        className="mb-4 flex w-full cursor-pointer items-center justify-center gap-3 rounded-2xl bg-brand px-6 py-6 text-xl font-bold text-white shadow-lg shadow-brand/25 transition-colors hover:bg-brand-600 focus:outline-none focus-visible:ring-4 focus-visible:ring-brand/40 sm:py-7 sm:text-2xl">
+        <ScanLine className="h-8 w-8" /> SCANEAZĂ COLETE REFUZATE
+      </button>
+      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[260px_1fr]">
+        <Card className="p-5">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Azi</div>
+          <div className="mt-1 text-3xl font-bold tabular">{d ? d.today_parcels : "—"}<span className="ml-1 text-base font-semibold text-slate-400">colete</span></div>
+          <div className="text-sm text-slate-500">{d ? d.today_units : "—"} produse readăugate în stoc</div>
+          {d && <RefusedTotals items={d.items} />}
+        </Card>
+        <Card className="p-5">{d ? <RefusedChart items={d.items} /> : <PageLoader />}</Card>
+      </div>
       {!d ? <PageLoader /> : d.items.length === 0 ? <Card><Empty icon={ScanLine} title="Niciun colet refuzat recepționat în ultimele 30 de zile" /></Card> : (
         <Card className="overflow-hidden">
           <div className="overflow-x-auto">
@@ -1413,6 +1416,74 @@ function RefusedTab() {
           </div>
         </Card>
       )}
+    </div>
+  );
+}
+
+
+const dayKey = (iso) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/Bucharest" });
+
+function refusedDays(items) {
+  const days = [];
+  const now = new Date();
+  for (let k = 29; k >= 0; k--) {
+    const dt = new Date(now.getTime() - k * 86400000);
+    days.push({ key: dayKey(dt.toISOString()), date: dt, parcels: 0, units: 0 });
+  }
+  const map = Object.fromEntries(days.map((x) => [x.key, x]));
+  for (const r of items) {
+    if (r.undone) continue; // scanările anulate nu se numără
+    const x = map[dayKey(r.created_at)];
+    if (x) { x.parcels += 1; x.units += r.units || 0; }
+  }
+  return days;
+}
+
+function RefusedTotals({ items }) {
+  const days = refusedDays(items);
+  const total = days.reduce((a, x) => a + x.parcels, 0);
+  const units = days.reduce((a, x) => a + x.units, 0);
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Ultimele 30 de zile</div>
+      <div className="mt-1 text-2xl font-bold tabular">{total}<span className="ml-1 text-sm font-semibold text-slate-400">colete</span></div>
+      <div className="text-sm text-slate-500">{units} produse · media {(total / 30).toFixed(1)}/zi</div>
+    </div>
+  );
+}
+
+function RefusedChart({ items }) {
+  const [h, setH] = useState(null);
+  const days = refusedDays(items);
+  const max = Math.max(1, ...days.map((x) => x.parcels));
+  const fmt = (dt, o) => dt.toLocaleDateString("ro-RO", { timeZone: "Europe/Bucharest", ...o });
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-sm font-semibold text-slate-900">Colete refuzate recepționate pe zi</div>
+        <div className="text-xs text-slate-500">ultimele 30 de zile · fără scanările anulate</div>
+      </div>
+      <div className="relative flex h-44 items-end gap-[3px]" onMouseLeave={() => setH(null)}>
+        {[0.5, 1].map((g) => <div key={g} className="pointer-events-none absolute inset-x-0 border-t border-dashed border-slate-100" style={{ bottom: `${g * 100}%` }} />)}
+        {days.map((x, i) => (
+          <div key={x.key} onMouseEnter={() => setH(i)} className="relative flex h-full flex-1 cursor-default items-end">
+            <div className={cx("w-full rounded-t transition-colors", i === days.length - 1 ? "bg-brand" : h === i ? "bg-brand/80" : "bg-brand/40")}
+              style={{ height: `${(x.parcels / max) * 100}%`, minHeight: x.parcels ? 3 : 0 }} />
+            {h === i && (
+              <div className={cx("pointer-events-none absolute bottom-full z-10 mb-2 whitespace-nowrap rounded-md bg-white px-2.5 py-1.5 text-xs text-slate-700 shadow-lg ring-1 ring-slate-200",
+                i > 24 ? "right-0" : i < 5 ? "left-0" : "left-1/2 -translate-x-1/2")}>
+                <div className="font-semibold capitalize text-slate-900">{fmt(x.date, { weekday: "long", day: "numeric", month: "long" })}</div>
+                <div><strong>{x.parcels}</strong> colete · {x.units} produse readăugate</div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex justify-between text-[11px] tabular text-slate-400">
+        <span>{fmt(days[0].date, { day: "numeric", month: "short" })}</span>
+        <span>{fmt(days[14].date, { day: "numeric", month: "short" })}</span>
+        <span className="font-semibold text-slate-600">azi</span>
+      </div>
     </div>
   );
 }
