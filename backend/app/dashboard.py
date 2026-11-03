@@ -132,6 +132,7 @@ async def today(_: dict = Depends(get_current_user)):
                      "items": [f"{i['qty']}× {i.get('title') or i.get('name')}" if i["qty"] > 1 else (i.get("title") or i.get("name")) for i in its],
                      "image": first.get("image"), "cancelled": bool(o.get("cancelled")), "confirmed": o["order_id"] in conf_ids})
 
+    hot = await _hot_products(db, now)
     best = max(hours, key=lambda h: h["orders"]) if live else None
     st = await _state()
     y_rev_same = sum(val(o) for o in y_same)
@@ -145,6 +146,46 @@ async def today(_: dict = Depends(get_current_user)):
         "hours": [{**h, "revenue": round(h["revenue"], 2), "y_revenue": round(h["y_revenue"], 2)} for h in hours],
         "best_hour": {"hour": best["hour"], "orders": best["orders"]} if best and best["orders"] else None,
         "last_hour": sum(1 for o in live if _local(o["created_at"]) >= now - timedelta(hours=1)),
-        "top_products": top, "top_counties": top_counties, "feed": feed,
+        "top_products": top, "top_counties": top_counties, "feed": feed, "hot": hot,
         "last_order_at": orders[0]["created_at"] if orders else None, "last_sync": st.get("last_sync"),
     }
+
+
+async def _hot_products(db, now: datetime) -> list[dict]:
+    """Produse „hot”: vânzările din ultimele 24 de ore față de media zilnică din cele 7 zile dinainte.
+    Trendul = bucăți pe zi în ultimele 8 zile (ultima bară = ultimele 24 de ore)."""
+    end = now.astimezone(timezone.utc)
+    start = end - timedelta(days=8)
+    daily: dict[str, list[int]] = defaultdict(lambda: [0] * 8)
+    titles: dict[str, str] = {}
+    async for o in db.profit_orders.find({"test": {"$ne": True}, "cancelled": {"$ne": True}, "created_at": {"$gte": _z(start)}},
+                                         {"_id": 0, "created_at": 1, "items": 1, "lines": 1}):
+        t = datetime.fromisoformat(o["created_at"].replace("Z", "+00:00"))
+        idx = 7 - min(7, int((end - t).total_seconds() // 86400))  # 7 = ultimele 24h, 0 = acum 7-8 zile
+        for i in (o.get("items") or o.get("lines") or []):
+            if not i.get("variant_id"):
+                continue
+            daily[i["variant_id"]][idx] += int(i.get("qty") or 0)
+            titles.setdefault(i["variant_id"], i.get("title") or i.get("name") or "")
+    out = []
+    for vid, days in daily.items():
+        last = days[7]
+        base = sum(days[:7]) / 7
+        if last < 3:
+            continue  # prea puține vânzări ca să conteze
+        growth = (last - base) / base * 100 if base > 0 else None
+        if growth is not None and growth < 50:
+            continue
+        out.append({"variant_id": vid, "last24": last, "avg7": round(base, 1), "growth": round(growth) if growth is not None else None,
+                    "trend": days, "score": (last - base) * (1 + (min(growth, 500) / 100 if growth is not None else 3))})
+    out.sort(key=lambda r: -r["score"])
+    out = out[:8]
+    info = {v["variant_id"]: v async for v in db.stock_variants.find(
+        {"variant_id": {"$in": [r["variant_id"] for r in out]}},
+        {"_id": 0, "variant_id": 1, "image": 1, "product_title": 1, "variant_title": 1, "on_hand": 1})}
+    for r in out:
+        v = info.get(r["variant_id"], {})
+        r.update(title=v.get("product_title") or titles.get(r["variant_id"]), variant=v.get("variant_title") or "",
+                 image=v.get("image"), on_hand=v.get("on_hand"))
+        r.pop("score", None)
+    return out

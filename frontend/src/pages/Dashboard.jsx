@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Maximize2, Minimize2, Package, TrendingUp, TrendingDown, MapPin, Zap, Truck, CheckCircle2, ShoppingBag } from "lucide-react";
+import { Maximize2, Minimize2, Package, TrendingUp, TrendingDown, MapPin, Zap, Truck, CheckCircle2, ShoppingBag, Flame } from "lucide-react";
 import { api } from "../lib/api";
 import { cx } from "../components/ui";
 
@@ -75,6 +75,23 @@ function CumulativeChart({ hours, nowHour, dark }) {
       <path d={path(yday)} fill="none" stroke={yc} strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
       {tPath && <path d={`${tPath} L${x(last)},${H - P} L${x(0)},${H - P} Z`} fill="url(#dg)" />}
       {tPath && <path d={tPath} fill="none" stroke="#E91E63" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
+    </svg>
+  );
+}
+
+function Spark({ data, dark }) {
+  const W = 120, H = 34, P = 3;
+  const max = Math.max(1, ...data);
+  const x = (i) => P + (i / (data.length - 1)) * (W - 2 * P);
+  const y = (v) => H - P - (v / max) * (H - 2 * P);
+  const d = data.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const li = data.length - 1;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-9 w-full" aria-hidden="true">
+      <path d={`${d} L${x(li)},${H} L${x(0)},${H} Z`} fill="#E91E63" opacity={dark ? 0.18 : 0.08} />
+      <path d={d} fill="none" stroke={dark ? "rgba(255,255,255,.35)" : "#cbd5e1"} strokeWidth="1.5" />
+      <path d={`M${x(li - 1)},${y(data[li - 1])} L${x(li)},${y(data[li])}`} fill="none" stroke="#E91E63" strokeWidth="2.5" strokeLinecap="round" />
+      <circle cx={x(li)} cy={y(data[li])} r="3" fill="#E91E63" />
     </svg>
   );
 }
@@ -192,6 +209,40 @@ export default function Dashboard({ tv = false }) {
               </div>
             </div>
           </div>
+
+          {d.hot?.length > 0 && (
+            <div className={cx(t.card, "mt-4")}>
+              <div className={cx("flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3.5", t.border)}>
+                <div className={cx("inline-flex items-center gap-2 text-sm font-semibold", t.strong)}><Flame className="h-4 w-4 text-orange-500" /> Produse hot</div>
+                <div className={cx("text-xs", t.muted)}>vânzările din ultimele 24 h față de media zilnică din cele 7 zile dinainte</div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                {d.hot.slice(0, tv ? 4 : 8).map((p) => (
+                  <div key={p.variant_id} className={cx("rounded-lg p-3 ring-1", tv ? "bg-white/[.03] ring-white/10" : "bg-slate-50/60 ring-slate-200")}>
+                    <div className="flex items-start gap-3">
+                      {p.image ? <img src={p.image} alt="" className="h-11 w-11 shrink-0 rounded-lg bg-white object-cover ring-1 ring-slate-200" /> : <div className={cx("h-11 w-11 shrink-0 rounded-lg", t.thumb)} />}
+                      <div className="min-w-0 flex-1">
+                        <div className={cx("line-clamp-2 text-sm font-medium leading-snug", t.strong)} title={p.title}>{p.title}{p.variant ? ` — ${p.variant}` : ""}</div>
+                      </div>
+                      <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-xs font-bold tabular", p.growth === null ? "bg-violet-100 text-violet-700" : "bg-orange-100 text-orange-700")}>
+                        {p.growth === null ? "NOU" : `+${p.growth}%`}
+                      </span>
+                    </div>
+                    <div className="mt-2"><Spark data={p.trend} dark={tv} /></div>
+                    <div className={cx("mt-1 flex items-center justify-between text-xs", t.muted)}>
+                      <span><strong className={cx("text-sm tabular", t.strong)}>{p.last24}</strong> buc în 24 h</span>
+                      <span>media {p.avg7}/zi</span>
+                    </div>
+                    {p.on_hand !== undefined && p.on_hand !== null && (
+                      <div className={cx("mt-1 text-xs", p.on_hand < p.last24 * 2 ? "font-semibold text-red-600" : t.faint)}>
+                        stoc {p.on_hand} buc{p.on_hand < p.last24 * 2 ? " · ajunge sub 2 zile" : ""}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
             {/* evoluția zilei */}
