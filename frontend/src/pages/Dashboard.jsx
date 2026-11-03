@@ -53,8 +53,8 @@ function Clock() {
   );
 }
 
-function CumulativeChart({ hours, nowHour }) {
-  const W = 1000, H = 260, P = 8;
+function CumulativeChart({ hours, nowHour, dark }) {
+  const W = 1000, H = 240, P = 8;
   const today = [], yday = [];
   let a = 0, b = 0;
   hours.forEach((h, i) => { a += h.revenue; b += h.y_revenue; today.push(i <= nowHour ? a : null); yday.push(b); });
@@ -64,22 +64,51 @@ function CumulativeChart({ hours, nowHour }) {
   const path = (arr) => arr.map((v, i) => (v === null ? "" : `${i === 0 || arr[i - 1] === null ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`)).join(" ");
   const tPath = path(today);
   const last = today.reduce((acc, v, i) => (v !== null ? i : acc), 0);
+  const grid = dark ? "rgba(255,255,255,.06)" : "#f1f5f9";
+  const yc = dark ? "rgba(255,255,255,.28)" : "#94a3b8";
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" preserveAspectRatio="none" role="img" aria-label="Vânzări cumulate azi față de ieri">
       <defs>
-        <linearGradient id="dg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#ff2d7a" stopOpacity=".55" /><stop offset="100%" stopColor="#ff2d7a" stopOpacity="0" /></linearGradient>
+        <linearGradient id="dg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#E91E63" stopOpacity={dark ? ".5" : ".22"} /><stop offset="100%" stopColor="#E91E63" stopOpacity="0" /></linearGradient>
       </defs>
-      {[0.25, 0.5, 0.75].map((g) => <line key={g} x1={P} x2={W - P} y1={y(max * g)} y2={y(max * g)} stroke="rgba(255,255,255,.06)" />)}
-      <path d={path(yday)} fill="none" stroke="rgba(255,255,255,.28)" strokeWidth="2.5" strokeDasharray="6 7" vectorEffect="non-scaling-stroke" />
+      {[0.25, 0.5, 0.75].map((g) => <line key={g} x1={P} x2={W - P} y1={y(max * g)} y2={y(max * g)} stroke={grid} vectorEffect="non-scaling-stroke" />)}
+      <path d={path(yday)} fill="none" stroke={yc} strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
       {tPath && <path d={`${tPath} L${x(last)},${H - P} L${x(0)},${H - P} Z`} fill="url(#dg)" />}
-      {tPath && <path d={tPath} fill="none" stroke="#ff2d7a" strokeWidth="3.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
-      {tPath && <circle cx={x(last)} cy={y(today[last])} r="7" fill="#ff2d7a" className="dash-pulse" style={{ transformOrigin: `${x(last)}px ${y(today[last])}px` }} />}
+      {tPath && <path d={tPath} fill="none" stroke="#E91E63" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
     </svg>
+  );
+}
+
+const THEMES = {
+  light: {
+    page: "", card: "rounded-xl bg-white ring-1 ring-slate-200 shadow-sm", muted: "text-slate-500", faint: "text-slate-400",
+    strong: "text-slate-900", label: "text-xs font-medium uppercase tracking-wide text-slate-500", track: "bg-slate-100",
+    barY: "bg-slate-200", rowHover: "hover:bg-slate-50", divide: "divide-slate-100", border: "border-slate-100", thumb: "bg-slate-100",
+    btn: "ring-1 ring-slate-200 bg-white text-slate-600 hover:bg-slate-50 hover:text-slate-900", up: "text-emerald-600", down: "text-red-600",
+  },
+  dark: {
+    page: "dash-bg min-h-dvh p-5 text-white lg:p-8", card: "dash-card", muted: "text-white/55", faint: "text-white/35",
+    strong: "text-white", label: "text-xs font-medium uppercase tracking-widest text-white/50", track: "bg-white/10",
+    barY: "bg-white/15", rowHover: "", divide: "divide-white/5", border: "border-white/10", thumb: "bg-white/10",
+    btn: "border border-white/10 text-white/60 hover:bg-white/10 hover:text-white", up: "text-emerald-400", down: "text-rose-400",
+  },
+};
+
+function Delta2({ now, before, label, t }) {
+  if (!before) return <span className={t.faint}>{label}: —</span>;
+  const p = Math.round(((now - before) / before) * 100);
+  const up = p >= 0;
+  return (
+    <span className="inline-flex items-center gap-1 text-sm">
+      <span className={cx("inline-flex items-center gap-0.5 font-semibold", up ? t.up : t.down)}>{up ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}{up ? "+" : ""}{p}%</span>
+      <span className={t.muted}>{label}</span>
+    </span>
   );
 }
 
 export default function Dashboard({ tv = false }) {
   const nav = useNavigate();
+  const t = THEMES[tv ? "dark" : "light"];
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
   const seen = useRef(null);
@@ -96,7 +125,7 @@ export default function Dashboard({ tv = false }) {
   }).catch((e) => setErr(e.message));
   useEffect(() => { load(); const i = setInterval(load, 20000); return () => clearInterval(i); }, []); // eslint-disable-line
   const [, tick] = useState(0);
-  useEffect(() => { const i = setInterval(() => tick((t) => t + 1), 15000); return () => clearInterval(i); }, []);
+  useEffect(() => { const i = setInterval(() => tick((v) => v + 1), 15000); return () => clearInterval(i); }, []);
 
   const revenue = useCount(d?.revenue || 0);
   const orders = useCount(d?.orders || 0);
@@ -111,142 +140,147 @@ export default function Dashboard({ tv = false }) {
     nav("/ecran");
     setTimeout(() => document.documentElement.requestFullscreen?.().catch(() => {}), 100);
   };
+  const today = new Date().toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/Bucharest" });
 
   return (
-    <div className={cx("dash-bg text-white", tv ? "min-h-dvh p-5 lg:p-8" : "rounded-3xl p-5 lg:p-8")}>
-      <div className={cx("flex flex-wrap items-center justify-between gap-4", tv ? "mb-4" : "mb-6")}>
-        <div className="flex items-center gap-4">
-          <img src="/ieftinit-logo.png" alt="" className="h-10 w-auto rounded bg-white/90 px-2 py-1" onError={(e) => { e.currentTarget.style.display = "none"; }} />
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.25em] text-white/50">
-              <span className="dash-pulse inline-block h-2.5 w-2.5 rounded-full bg-rose-500 shadow-[0_0_12px_#f43f5e]" /> Live · vânzările de azi
-            </div>
-            <div className="text-2xl font-bold tracking-tight lg:text-3xl">IEFTINIT.RO</div>
+    <div className={t.page}>
+      {/* antet — la fel ca restul platformei */}
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className={cx("flex items-center gap-2 text-[11px] font-semibold uppercase tracking-widest", tv ? "text-white/50" : "text-slate-400")}>
+            <span className="relative flex h-2 w-2"><span className="dash-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-500" /><span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" /></span>
+            Dashboard · live
           </div>
+          <h1 className={cx("mt-1 text-2xl font-bold tracking-tight sm:text-3xl", t.strong)}>Vânzările de azi</h1>
+          <div className={cx("mt-1 text-sm capitalize", t.muted)}>{today}{d?.last_sync ? ` · actualizat ${ago(d.last_sync)}` : ""}</div>
         </div>
-        <div className="flex items-center gap-5">
-          <Clock />
-          <button onClick={fullscreen} title={tv ? "Ieși din modul ecran" : "Mod ecran (TV)"} className="rounded-xl border border-white/10 p-2.5 text-white/60 hover:bg-white/10 hover:text-white">
-            {tv ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+        <div className="flex items-center gap-3">
+          {tv && <Clock />}
+          <button onClick={fullscreen} className={cx("inline-flex h-10 cursor-pointer items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors", t.btn)}>
+            {tv ? <><Minimize2 className="h-4 w-4" /> Ieși din modul ecran</> : <><Maximize2 className="h-4 w-4" /> Mod ecran (TV)</>}
           </button>
         </div>
       </div>
-      {err && <div className="mb-4 rounded-xl bg-rose-500/15 px-4 py-2 text-sm text-rose-200">Nu pot încărca datele: {err}</div>}
-      {!d ? <div className="py-32 text-center text-white/40">Se încarcă…</div> : (
+      {err && <div className="mb-4 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700 ring-1 ring-red-200">Nu pot încărca datele: {err}</div>}
+      {!d ? <div className={cx("py-32 text-center", t.faint)}>Se încarcă…</div> : (
         <>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-            <div className="dash-card relative overflow-hidden p-6 lg:col-span-5">
-              <div className="text-sm font-medium uppercase tracking-widest text-white/50">Vânzări azi</div>
-              <div key={pop} className={cx("dash-pop mt-2 font-extrabold tabular tracking-tight", tv ? "text-6xl 2xl:text-7xl" : "text-5xl lg:text-7xl")}>{lei(revenue)}</div>
-              <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm">
-                <Delta now={d.revenue} before={d.y_revenue_same} label="față de ieri la aceeași oră" />
+          {/* cifrele zilei */}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className={cx(t.card, "col-span-2 p-5 lg:col-span-1")}>
+              <div className={t.label}>Vânzări azi</div>
+              <div key={pop} className={cx("dash-pop mt-1 text-3xl font-bold tabular tracking-tight text-brand", tv && "text-5xl")}>{lei(revenue)}</div>
+              <div className="mt-2"><Delta2 now={d.revenue} before={d.y_revenue_same} label="vs ieri la ora asta" t={t} /></div>
+              <div className={cx("mt-0.5 text-xs", t.faint)}>ieri până la ora asta: {lei(d.y_revenue_same)}</div>
+            </div>
+            <div className={cx(t.card, "p-5")}>
+              <div className={t.label}>Comenzi</div>
+              <div key={`o${pop}`} className={cx("dash-pop mt-1 text-3xl font-bold tabular", t.strong, tv && "text-5xl")}>{Math.round(orders)}</div>
+              <div className="mt-2"><Delta2 now={d.orders} before={d.y_orders_same} label="vs ieri" t={t} /></div>
+              <div className={cx("mt-0.5 text-xs", t.faint)}>{d.last_hour} în ultima oră{d.cancelled ? ` · ${d.cancelled} anulate` : ""}</div>
+            </div>
+            <div className={cx(t.card, "p-5")}>
+              <div className={t.label}>Valoare medie</div>
+              <div className={cx("mt-1 text-3xl font-bold tabular", t.strong, tv && "text-5xl")}>{lei(aov)}</div>
+              <div className={cx("mt-2 text-sm", t.muted)}>{d.units} produse vândute</div>
+            </div>
+            <div className={cx(t.card, "col-span-2 p-5 lg:col-span-1")}>
+              <div className={t.label}>Procesare</div>
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center justify-between"><span className={cx("inline-flex items-center gap-2 text-sm", t.muted)}><CheckCircle2 className="h-4 w-4 text-emerald-500" /> Confirmate</span><span className={cx("text-lg font-bold tabular", t.strong)}>{d.confirmed}</span></div>
+                <div className="flex items-center justify-between"><span className={cx("inline-flex items-center gap-2 text-sm", t.muted)}><Truck className="h-4 w-4 text-sky-500" /> AWB emise azi</span><span className={cx("text-lg font-bold tabular", t.strong)}>{d.awb_today}</span></div>
+                {d.best_hour && <div className="flex items-center justify-between"><span className={cx("inline-flex items-center gap-2 text-sm", t.muted)}><Zap className="h-4 w-4 text-amber-500" /> Ora de vârf</span><span className={cx("text-sm font-semibold", t.strong)}>{d.best_hour.hour}:00 · {d.best_hour.orders} com.</span></div>}
               </div>
-              <div className="mt-1 text-xs text-white/40">Ieri la ora asta: {lei(d.y_revenue_same)} · ieri total: {lei(d.y_revenue)}</div>
-              <div className="pointer-events-none absolute -right-10 -top-10 h-48 w-48 rounded-full bg-[#ff2d7a]/20 blur-3xl" />
-            </div>
-            <div className="dash-card p-6 lg:col-span-3">
-              <div className="text-sm font-medium uppercase tracking-widest text-white/50">Comenzi</div>
-              <div key={`o${pop}`} className="dash-pop mt-2 text-5xl font-extrabold tabular lg:text-7xl">{Math.round(orders)}</div>
-              <div className="mt-3 text-sm"><Delta now={d.orders} before={d.y_orders_same} label="vs ieri" /></div>
-              <div className="mt-1 text-xs text-white/40">{d.last_hour} în ultima oră{d.cancelled ? ` · ${d.cancelled} anulate` : ""}</div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 lg:col-span-4">
-              {[
-                ["Valoare medie", lei(aov), ShoppingBag],
-                ["Produse vândute", d.units, Package],
-                ["Confirmate", d.confirmed, CheckCircle2],
-                ["AWB emise azi", d.awb_today, Truck],
-              ].map(([l, v, I]) => (
-                <div key={l} className="dash-card p-4">
-                  <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-white/45"><I className="h-3.5 w-3.5" /> {l}</div>
-                  <div className="mt-1 text-2xl font-bold tabular lg:text-3xl">{v}</div>
-                </div>
-              ))}
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-            <div className="dash-card p-6 xl:col-span-8">
+          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+            {/* evoluția zilei */}
+            <div className={cx(t.card, "p-5 xl:col-span-2")}>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-sm font-medium uppercase tracking-widest text-white/50">Vânzări cumulate pe parcursul zilei</div>
-                <div className="flex items-center gap-4 text-xs text-white/50">
-                  <span className="flex items-center gap-1.5"><span className="h-1 w-5 rounded bg-[#ff2d7a]" /> Azi</span>
-                  <span className="flex items-center gap-1.5"><span className="h-0 w-5 border-t-2 border-dashed border-white/40" /> Ieri</span>
-                  {d.best_hour && <span className="flex items-center gap-1 text-amber-300"><Zap className="h-3.5 w-3.5" /> vârf: ora {d.best_hour.hour} ({d.best_hour.orders} comenzi)</span>}
+                <div className={cx("text-sm font-semibold", t.strong)}>Vânzări pe parcursul zilei</div>
+                <div className={cx("flex items-center gap-4 text-xs", t.muted)}>
+                  <span className="flex items-center gap-1.5"><span className="h-0.5 w-5 rounded bg-brand" /> Azi</span>
+                  <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-slate-400" /> Ieri</span>
                 </div>
               </div>
-              <div className={tv ? "h-44" : "h-56 lg:h-64"}><CumulativeChart hours={d.hours} nowHour={nowHour} /></div>
-              <div className={cx("mt-3 flex items-end gap-1", tv ? "h-20" : "h-24")}>
-                {d.hours.map((h) => (
-                  <div key={h.hour} className="flex flex-1 flex-col items-center gap-1">
-                    <div className={cx("relative flex w-full items-end justify-center gap-[2px]", tv ? "h-12" : "h-16")}>
-                      <div className="w-1/3 rounded-t bg-white/15" style={{ height: `${(h.y_orders / maxH) * 100}%` }} />
-                      <div className={cx("w-1/2 rounded-t", h.hour === nowHour ? "bg-[#ff2d7a] shadow-[0_0_14px_#ff2d7a]" : "bg-[#ff2d7a]/70")} style={{ height: `${(h.orders / maxH) * 100}%` }} />
+              <div className={tv ? "h-44" : "h-52"}><CumulativeChart hours={d.hours} nowHour={nowHour} dark={tv} /></div>
+              <div className={cx("mt-3 border-t pt-3", t.border)}>
+                <div className={cx("mb-1 text-xs", t.muted)}>Comenzi pe oră (azi față de ieri)</div>
+                <div className="flex h-16 items-end gap-1">
+                  {d.hours.map((h) => (
+                    <div key={h.hour} className="flex flex-1 flex-col items-center gap-1" title={`Ora ${h.hour}: ${h.orders} azi · ${h.y_orders} ieri`}>
+                      <div className="flex h-12 w-full items-end justify-center gap-[2px]">
+                        <div className={cx("w-1/3 rounded-t", t.barY)} style={{ height: `${(h.y_orders / maxH) * 100}%` }} />
+                        <div className={cx("w-1/2 rounded-t", h.hour === nowHour ? "bg-brand" : "bg-brand/50")} style={{ height: `${(h.orders / maxH) * 100}%` }} />
+                      </div>
+                      <div className={cx("text-[10px] tabular", h.hour === nowHour ? cx("font-bold", t.strong) : t.faint)}>{h.hour}</div>
                     </div>
-                    <div className={cx("text-[10px] tabular", h.hour === nowHour ? "font-bold text-white" : "text-white/35")}>{h.hour}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             </div>
 
-            <div className={cx("dash-card flex flex-col p-5 xl:col-span-4", tv ? "max-h-[440px]" : "max-h-[520px]")}>
-              <div className="mb-3 flex items-center justify-between">
-                <div className="text-sm font-medium uppercase tracking-widest text-white/50">Comenzi în timp real</div>
-                {d.last_order_at && <div className="text-xs text-white/40">ultima {ago(d.last_order_at)}</div>}
+            {/* comenzi în timp real */}
+            <div className={cx(t.card, "flex flex-col overflow-hidden", tv ? "max-h-[420px]" : "max-h-[460px]")}>
+              <div className={cx("flex items-center justify-between border-b px-5 py-3.5", t.border)}>
+                <div className={cx("text-sm font-semibold", t.strong)}>Comenzi în timp real</div>
+                {d.last_order_at && <div className={cx("text-xs", t.faint)}>ultima {ago(d.last_order_at)}</div>}
               </div>
-              <div className="-mx-2 min-h-0 flex-1 space-y-1.5 overflow-hidden">
+              <div className={cx("min-h-0 flex-1 divide-y overflow-y-auto", t.divide)}>
                 {d.feed.map((o) => (
-                  <div key={o.order_id} className={cx("flex items-center gap-3 rounded-xl px-2 py-2", fresh.has(o.order_id) && "dash-new", o.cancelled && "opacity-40")}>
-                    {o.image ? <img src={o.image} alt="" className="h-11 w-11 shrink-0 rounded-lg bg-white object-cover" /> : <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white/10"><Package className="h-5 w-5 text-white/40" /></div>}
+                  <div key={o.order_id} className={cx("flex items-center gap-3 px-5 py-2.5", fresh.has(o.order_id) && "dash-new", o.cancelled && "opacity-40")}>
+                    {o.image ? <img src={o.image} alt="" className="h-10 w-10 shrink-0 rounded-lg bg-white object-cover ring-1 ring-slate-200" /> : <div className={cx("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg", t.thumb)}><Package className={cx("h-4 w-4", t.faint)} /></div>}
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{o.items.join(" + ") || "—"}</div>
-                      <div className="truncate text-xs text-white/45">{o.name} · {o.customer} · {o.city}{o.confirmed ? " · ✓ confirmată" : ""}{o.cancelled ? " · anulată" : ""}</div>
+                      <div className={cx("truncate text-sm font-medium", t.strong)}>{o.items.join(" + ") || "—"}</div>
+                      <div className={cx("truncate text-xs", t.muted)}>{o.name} · {o.customer}{o.city ? `, ${o.city}` : ""}{o.cancelled ? " · anulată" : ""}</div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-bold tabular">{lei(o.total)}</div>
-                      <div className="text-[11px] tabular text-white/40">{hm(o.created_at)}</div>
+                      <div className={cx("text-sm font-semibold tabular", t.strong)}>{lei(o.total)}</div>
+                      <div className={cx("text-[11px] tabular", t.faint)}>{hm(o.created_at)}{o.confirmed && <CheckCircle2 className="ml-1 inline h-3 w-3 text-emerald-500" />}</div>
                     </div>
                   </div>
                 ))}
+                {d.feed.length === 0 && <div className={cx("px-5 py-8 text-center text-sm", t.faint)}>Nicio comandă încă azi.</div>}
               </div>
             </div>
           </div>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-12">
-            <div className="dash-card p-5 xl:col-span-8">
-              <div className="mb-4 text-sm font-medium uppercase tracking-widest text-white/50">Top produse azi</div>
-              <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className={cx(t.card, "xl:col-span-2")}>
+              <div className={cx("border-b px-5 py-3.5 text-sm font-semibold", t.border, t.strong)}>Top produse azi</div>
+              <div className="grid grid-cols-1 gap-x-8 gap-y-3 p-5 md:grid-cols-2">
                 {d.top_products.slice(0, tv ? 6 : 10).map((p, i) => (
                   <div key={p.variant_id} className="flex items-center gap-3">
-                    <div className={cx("w-6 text-center text-lg font-extrabold tabular", i === 0 ? "text-amber-300" : i === 1 ? "text-slate-200" : i === 2 ? "text-orange-300" : "text-white/30")}>{i + 1}</div>
-                    {p.image ? <img src={p.image} alt="" className="h-12 w-12 shrink-0 rounded-lg bg-white object-cover" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-white/10" />}
+                    <div className={cx("w-5 text-center text-sm font-bold tabular", i < 3 ? "text-brand" : t.faint)}>{i + 1}</div>
+                    {p.image ? <img src={p.image} alt="" className="h-10 w-10 shrink-0 rounded-lg bg-white object-cover ring-1 ring-slate-200" /> : <div className={cx("h-10 w-10 shrink-0 rounded-lg", t.thumb)} />}
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{p.title}{p.variant ? ` — ${p.variant}` : ""}</div>
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
-                        <div className="h-full rounded-full bg-gradient-to-r from-[#ff2d7a] to-[#ff8a3d] transition-all duration-1000" style={{ width: `${(p.qty / maxQty) * 100}%` }} />
+                      <div className={cx("truncate text-sm font-medium", t.strong)} title={p.title}>{p.title}{p.variant ? ` — ${p.variant}` : ""}</div>
+                      <div className={cx("mt-1.5 h-1.5 overflow-hidden rounded-full", t.track)}>
+                        <div className="h-full rounded-full bg-brand transition-all duration-700" style={{ width: `${(p.qty / maxQty) * 100}%` }} />
                       </div>
                     </div>
-                    <div className="w-14 shrink-0 text-right"><div className="text-lg font-bold tabular">{p.qty}</div><div className="text-[10px] text-white/40">buc</div></div>
+                    <div className="w-12 shrink-0 text-right"><span className={cx("text-base font-bold tabular", t.strong)}>{p.qty}</span><span className={cx("ml-0.5 text-xs", t.faint)}>buc</span></div>
                   </div>
                 ))}
-                {d.top_products.length === 0 && <div className="text-sm text-white/40">Încă nicio comandă azi.</div>}
+                {d.top_products.length === 0 && <div className={cx("text-sm", t.faint)}>Încă nicio comandă azi.</div>}
               </div>
             </div>
-            <div className="dash-card p-5 xl:col-span-4">
-              <div className="mb-4 text-sm font-medium uppercase tracking-widest text-white/50">De unde comandă azi</div>
-              <div className="space-y-2.5">
+            <div className={t.card}>
+              <div className={cx("border-b px-5 py-3.5 text-sm font-semibold", t.border, t.strong)}>Județe azi</div>
+              <div className="space-y-2.5 p-5">
                 {d.top_counties.slice(0, tv ? 5 : 8).map((c) => (
                   <div key={c.county} className="flex items-center gap-3 text-sm">
-                    <MapPin className="h-4 w-4 shrink-0 text-white/30" />
-                    <div className="w-28 shrink-0 truncate">{c.county}</div>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-indigo-400/80 transition-all duration-1000" style={{ width: `${(c.orders / maxCounty) * 100}%` }} /></div>
-                    <div className="w-8 text-right font-semibold tabular">{c.orders}</div>
+                    <MapPin className={cx("h-4 w-4 shrink-0", t.faint)} />
+                    <div className={cx("w-28 shrink-0 truncate", t.strong)}>{c.county}</div>
+                    <div className={cx("h-2 flex-1 overflow-hidden rounded-full", t.track)}><div className="h-full rounded-full bg-slate-400 transition-all duration-700" style={{ width: `${(c.orders / maxCounty) * 100}%` }} /></div>
+                    <div className={cx("w-8 text-right font-semibold tabular", t.strong)}>{c.orders}</div>
                   </div>
                 ))}
+                {d.top_counties.length === 0 && <div className={cx("text-sm", t.faint)}>—</div>}
               </div>
             </div>
           </div>
-          <div className="mt-4 text-center text-[11px] text-white/30">Se actualizează automat · comenzi din Shopify {d.last_sync ? ago(d.last_sync) : "—"} · valori cu TVA, comenzi neanulate</div>
+          <div className={cx("mt-4 text-center text-xs", t.faint)}>Se actualizează automat la 20 de secunde · valori cu TVA, comenzi neanulate</div>
         </>
       )}
     </div>
