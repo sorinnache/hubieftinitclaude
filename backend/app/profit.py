@@ -375,6 +375,11 @@ async def manual_sync(_: dict = Depends(require_admin)):
 
 async def _bg_sync():
     try:
+        from . import stock  # costurile (COGS) vin din lista de produse — le reîmprospătăm întâi
+        try:
+            await stock.sync_products()
+        except Exception as e:  # noqa: BLE001
+            log.error("sync produse/COGS: %s", e)
         await sync(full_recent=True)
     except Exception as e:  # noqa: BLE001
         log.error("sync profit manual: %s", e)
