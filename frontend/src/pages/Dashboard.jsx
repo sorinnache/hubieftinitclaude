@@ -53,7 +53,7 @@ function Clock() {
   );
 }
 
-function CumulativeChart({ hours, nowHour, dark }) {
+function CumulativeChart({ hours, nowHour, dark, hover, setHover }) {
   const W = 1000, H = 240, P = 8;
   const today = [], yday = [];
   let a = 0, b = 0;
@@ -66,33 +66,78 @@ function CumulativeChart({ hours, nowHour, dark }) {
   const last = today.reduce((acc, v, i) => (v !== null ? i : acc), 0);
   const grid = dark ? "rgba(255,255,255,.06)" : "#f1f5f9";
   const yc = dark ? "rgba(255,255,255,.28)" : "#94a3b8";
+  const onMove = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const i = Math.round(((e.clientX - r.left) / r.width) * 23);
+    setHover(Math.max(0, Math.min(23, i)));
+  };
+  const h = hover !== null ? hover : null;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" preserveAspectRatio="none" role="img" aria-label="Vânzări cumulate azi față de ieri">
-      <defs>
-        <linearGradient id="dg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#E91E63" stopOpacity={dark ? ".5" : ".22"} /><stop offset="100%" stopColor="#E91E63" stopOpacity="0" /></linearGradient>
-      </defs>
-      {[0.25, 0.5, 0.75].map((g) => <line key={g} x1={P} x2={W - P} y1={y(max * g)} y2={y(max * g)} stroke={grid} vectorEffect="non-scaling-stroke" />)}
-      <path d={path(yday)} fill="none" stroke={yc} strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
-      {tPath && <path d={`${tPath} L${x(last)},${H - P} L${x(0)},${H - P} Z`} fill="url(#dg)" />}
-      {tPath && <path d={tPath} fill="none" stroke="#E91E63" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
-    </svg>
+    <div className="relative h-full w-full cursor-crosshair" onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" preserveAspectRatio="none" role="img" aria-label="Vânzări cumulate azi față de ieri">
+        <defs>
+          <linearGradient id="dg" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#E91E63" stopOpacity={dark ? ".5" : ".22"} /><stop offset="100%" stopColor="#E91E63" stopOpacity="0" /></linearGradient>
+        </defs>
+        {[0.25, 0.5, 0.75].map((g) => <line key={g} x1={P} x2={W - P} y1={y(max * g)} y2={y(max * g)} stroke={grid} vectorEffect="non-scaling-stroke" />)}
+        <path d={path(yday)} fill="none" stroke={yc} strokeWidth="2" strokeDasharray="6 6" vectorEffect="non-scaling-stroke" />
+        {tPath && <path d={`${tPath} L${x(last)},${H - P} L${x(0)},${H - P} Z`} fill="url(#dg)" />}
+        {tPath && <path d={tPath} fill="none" stroke="#E91E63" strokeWidth="3" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />}
+        {h !== null && <line x1={x(h)} x2={x(h)} y1={P} y2={H - P} stroke={dark ? "rgba(255,255,255,.3)" : "#cbd5e1"} strokeWidth="1" vectorEffect="non-scaling-stroke" />}
+      </svg>
+      {h !== null && (
+        <>
+          <span className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-slate-400 shadow" style={{ left: `${(x(h) / W) * 100}%`, top: `${(y(yday[h]) / H) * 100}%` }} />
+          {today[h] !== null && <span className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-brand shadow" style={{ left: `${(x(h) / W) * 100}%`, top: `${(y(today[h]) / H) * 100}%` }} />}
+          <div className={cx("pointer-events-none absolute top-1 z-10 w-52 rounded-lg px-3 py-2 text-xs shadow-lg ring-1", dark ? "bg-slate-900/95 text-white ring-white/10" : "bg-white text-slate-700 ring-slate-200")}
+            style={{ left: `calc(${(x(h) / W) * 100}% ${h > 15 ? "- 13.5rem" : "+ 0.75rem"})` }}>
+            <div className={cx("mb-1 font-semibold", dark ? "text-white" : "text-slate-900")}>Până la ora {String(h + 1).padStart(2, "0")}:00</div>
+            <TipRow c="bg-brand" l="Azi" v={today[h] !== null ? lei(today[h]) : "—"} sub={today[h] !== null ? `${hours.slice(0, h + 1).reduce((s2, x2) => s2 + x2.orders, 0)} comenzi` : ""} />
+            <TipRow c="bg-slate-400" l="Ieri" v={lei(yday[h])} sub={`${hours.slice(0, h + 1).reduce((s2, x2) => s2 + x2.y_orders, 0)} comenzi`} />
+            <div className={cx("mt-1 border-t pt-1", dark ? "border-white/10" : "border-slate-100")}>
+              <TipRow l={`Doar ora ${h}`} v={`${hours[h].orders} vs ${hours[h].y_orders} com.`} />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function TipRow({ c, l, v, sub }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <span className="inline-flex items-center gap-1.5">{c && <span className={cx("h-2 w-2 rounded-full", c)} />}{l}</span>
+      <span className="text-right font-semibold tabular">{v}{sub && <span className="ml-1 font-normal opacity-60">· {sub}</span>}</span>
+    </div>
   );
 }
 
 function Spark({ data, dark }) {
+  const [h, setH] = useState(null);
   const W = 120, H = 34, P = 3;
   const max = Math.max(1, ...data);
   const x = (i) => P + (i / (data.length - 1)) * (W - 2 * P);
   const y = (v) => H - P - (v / max) * (H - 2 * P);
   const d = data.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
   const li = data.length - 1;
+  const label = (i) => (i === li ? "ultimele 24 h" : i === li - 1 ? "acum 1–2 zile" : `acum ${li - i}–${li - i + 1} zile`);
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-9 w-full" aria-hidden="true">
-      <path d={`${d} L${x(li)},${H} L${x(0)},${H} Z`} fill="#E91E63" opacity={dark ? 0.18 : 0.08} />
-      <path d={d} fill="none" stroke={dark ? "rgba(255,255,255,.35)" : "#cbd5e1"} strokeWidth="1.5" />
-      <path d={`M${x(li - 1)},${y(data[li - 1])} L${x(li)},${y(data[li])}`} fill="none" stroke="#E91E63" strokeWidth="2.5" strokeLinecap="round" />
-      <circle cx={x(li)} cy={y(data[li])} r="3" fill="#E91E63" />
-    </svg>
+    <div className="relative" onMouseLeave={() => setH(null)}
+      onMouseMove={(e) => { const r = e.currentTarget.getBoundingClientRect(); setH(Math.max(0, Math.min(li, Math.round(((e.clientX - r.left) / r.width) * li)))); }}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="h-10 w-full cursor-crosshair" aria-hidden="true">
+        <path d={`${d} L${x(li)},${H} L${x(0)},${H} Z`} fill="#E91E63" opacity={dark ? 0.18 : 0.08} />
+        <path d={d} fill="none" stroke={dark ? "rgba(255,255,255,.35)" : "#cbd5e1"} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+        <path d={`M${x(li - 1)},${y(data[li - 1])} L${x(li)},${y(data[li])}`} fill="none" stroke="#E91E63" strokeWidth="2.5" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <span className="pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand" style={{ left: `${(x(li) / W) * 100}%`, top: `${(y(data[li]) / H) * 100}%` }} />
+      {h !== null && <span className={cx("pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow", h === li ? "bg-brand" : "bg-slate-500")} style={{ left: `${(x(h) / W) * 100}%`, top: `${(y(data[h]) / H) * 100}%` }} />}
+      {h !== null && (
+        <div className={cx("pointer-events-none absolute -top-8 z-10 whitespace-nowrap rounded-md px-2 py-1 text-[11px] shadow ring-1", dark ? "bg-slate-900 text-white ring-white/10" : "bg-white text-slate-700 ring-slate-200")}
+          style={{ left: `${(x(h) / W) * 100}%`, transform: `translateX(${h > li / 2 ? "-100%" : "0"})` }}>
+          <strong>{data[h]} buc</strong> · {label(h)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -144,6 +189,7 @@ export default function Dashboard({ tv = false }) {
   const [, tick] = useState(0);
   useEffect(() => { const i = setInterval(() => tick((v) => v + 1), 15000); return () => clearInterval(i); }, []);
 
+  const [hoverH, setHoverH] = useState(null); // ora evidențiată, comună graficului și barelor
   const revenue = useCount(d?.revenue || 0);
   const orders = useCount(d?.orders || 0);
   const aov = useCount(d?.aov || 0);
@@ -254,12 +300,19 @@ export default function Dashboard({ tv = false }) {
                   <span className="flex items-center gap-1.5"><span className="w-5 border-t-2 border-dashed border-slate-400" /> Ieri</span>
                 </div>
               </div>
-              <div className={tv ? "h-44" : "h-52"}><CumulativeChart hours={d.hours} nowHour={nowHour} dark={tv} /></div>
+              <div className={tv ? "h-44" : "h-52"}><CumulativeChart hours={d.hours} nowHour={nowHour} dark={tv} hover={hoverH} setHover={setHoverH} /></div>
               <div className={cx("mt-3 border-t pt-3", t.border)}>
                 <div className={cx("mb-1 text-xs", t.muted)}>Comenzi pe oră (azi față de ieri)</div>
                 <div className="flex h-16 items-end gap-1">
                   {d.hours.map((h) => (
-                    <div key={h.hour} className="flex flex-1 flex-col items-center gap-1" title={`Ora ${h.hour}: ${h.orders} azi · ${h.y_orders} ieri`}>
+                    <div key={h.hour} onMouseEnter={() => setHoverH(h.hour)} onMouseLeave={() => setHoverH(null)}
+                      className={cx("relative flex flex-1 cursor-default flex-col items-center gap-1 rounded transition-colors", hoverH === h.hour && (tv ? "bg-white/5" : "bg-slate-100"))}>
+                      {hoverH === h.hour && (
+                        <div className={cx("pointer-events-none absolute bottom-full z-10 mb-1 whitespace-nowrap rounded-md px-2 py-1 text-[11px] shadow ring-1", tv ? "bg-slate-900 text-white ring-white/10" : "bg-white text-slate-700 ring-slate-200",
+                          h.hour > 18 ? "right-0" : h.hour < 4 ? "left-0" : "left-1/2 -translate-x-1/2")}>
+                          <strong>Ora {h.hour}</strong> · azi {h.orders} com. ({lei(h.revenue)}) · ieri {h.y_orders}
+                        </div>
+                      )}
                       <div className="flex h-12 w-full items-end justify-center gap-[2px]">
                         <div className={cx("w-1/3 rounded-t", t.barY)} style={{ height: `${(h.y_orders / maxH) * 100}%` }} />
                         <div className={cx("w-1/2 rounded-t", h.hour === nowHour ? "bg-brand" : "bg-brand/50")} style={{ height: `${(h.orders / maxH) * 100}%` }} />
