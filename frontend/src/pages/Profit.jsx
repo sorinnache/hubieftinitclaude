@@ -108,6 +108,7 @@ function MonthsTable({ months, active, onPick }) {
               <th className="px-4 py-3 text-right">Costuri totale</th>
               <th className="px-4 py-3 text-right">Profit net</th>
               <th className="px-4 py-3 text-right">Marjă</th>
+              <th className="px-4 py-3 text-right">Stoc la final de lună</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -124,6 +125,7 @@ function MonthsTable({ months, active, onPick }) {
                 <td className="whitespace-nowrap px-4 py-2.5 text-right tabular">{money(m.total_costs + m.tax)}</td>
                 <td className={cx("whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular", m.net_profit < 0 ? "text-red-600" : "text-emerald-700")}>{money(m.net_profit)}</td>
                 <td className="px-4 py-2.5 text-right tabular text-slate-500">{m.margin}%</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular text-slate-600">{m.stock_end ? <>{money(m.stock_end.value)}{m.stock_end.source === "live" && <span className="ml-1 text-xs text-slate-400">(acum)</span>}</> : <span className="text-slate-300">—</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -206,6 +208,22 @@ function MonthDetail({ period, onSaved }) {
           <Line label="Profit înainte de impozit" value={d.profit_before_tax} strong neg={d.profit_before_tax < 0} />
           <Line label={d.tax_label} value={d.tax} neg />
           <Line label="Profit net rămas în firmă" value={d.net_profit} strong big neg={d.net_profit < 0} sub={`marjă netă ${d.margin}% din venituri`} />
+        </div>
+        <div className="mx-5 mb-4 rounded-lg bg-slate-50 px-4 py-3 ring-1 ring-slate-200">
+          <div className="flex items-baseline justify-between gap-4">
+            <div>
+              <div className="text-sm font-semibold text-slate-800">Valoare stoc în depozit la sfârșitul lunii</div>
+              <div className="text-xs text-slate-500">
+                {d.stock_end
+                  ? d.stock_end.source === "live" ? `luna nu s-a încheiat — valoarea de acum · ${d.stock_end.units} buc`
+                    : `situația din ${new Date(d.stock_end.as_of).toLocaleString("ro-RO", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Bucharest" })}${d.stock_end.source === "manual" ? " (generată manual)" : ""} · ${d.stock_end.units} buc`
+                  : "nu există situație de stoc pentru această lună (stocurile se urmăresc din 28.10.2026)"}
+                {" · la cost de achiziție, fără TVA · informativ, nu intră în profit"}
+              </div>
+              {d.stock_end?.missing_cost > 0 && <div className="mt-0.5 text-xs font-medium text-amber-600">{d.stock_end.missing_cost} produse din depozit nu au COGS și nu sunt incluse</div>}
+            </div>
+            <div className="whitespace-nowrap text-lg font-bold tabular text-slate-900">{d.stock_end ? money(d.stock_end.value) : "—"}</div>
+          </div>
         </div>
         {d.missing_cost.length > 0 && (
           <div className="m-5 mt-0 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800 ring-1 ring-red-200">

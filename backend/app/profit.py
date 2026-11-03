@@ -274,8 +274,36 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
         "inputs": {k2: inp.get(k2) for k2 in ("ads_facebook", "ads_google", "ads_tiktok", "other_costs", "other_note",
                                               "parcel_cost", "shipping_cost", "fixed_costs")},
         "vat_payer": payer,
+        "stock_end": await _stock_end(period),
     }
     return out
+
+
+async def _stock_end(period: str) -> Optional[dict]:
+    """Valoarea stocului din depozit la sfârșitul lunii (fără TVA, la cost de achiziție) — informativ, nu intră în profit.
+    Luna încheiată: situația salvată automat în ultima zi a lunii. Luna curentă: valoarea de acum."""
+    db = get_db()
+    snap = await db.stock_snapshots.find_one({"period": period, "kind": {"$in": ["auto", "late"]}},
+                                             {"_id": 0, "value": 1, "as_of": 1, "kind": 1, "units": 1, "missing_cost": 1},
+                                             sort=[("created_at", -1)])
+    if snap:
+        return {**snap, "source": "auto"}
+    now = datetime.now(TZ)
+    if period == now.strftime("%Y-%m"):
+        from .stock import NOT_BUNDLE, STOCK_STATUSES  # import local: evităm importurile circulare
+        value, units, missing = 0.0, 0, 0
+        async for v in db.stock_variants.find({"status": STOCK_STATUSES, "deleted": {"$ne": True}, "untracked": {"$ne": True},
+                                               "on_hand": {"$gt": 0}, **NOT_BUNDLE}, {"_id": 0, "on_hand": 1, "cost": 1}):
+            units += int(v["on_hand"])
+            c = v.get("cost")
+            if c is not None and float(c) > 0:
+                value += int(v["on_hand"]) * float(c)
+            else:
+                missing += 1
+        return {"value": round(value, 2), "units": units, "missing_cost": missing, "as_of": now.isoformat(), "source": "live"}
+    snap = await db.stock_snapshots.find_one({"period": period}, {"_id": 0, "value": 1, "as_of": 1, "kind": 1, "units": 1,
+                                                                  "missing_cost": 1}, sort=[("created_at", -1)])
+    return {**snap, "source": "manual"} if snap else None
 
 
 def _periods(n: int = 12) -> list[str]:
