@@ -117,7 +117,7 @@ export function Modal({ open, onClose, title, children, footer, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onMouseDown={onClose}>
       <div
-        className={cx("max-h-[92vh] w-full overflow-hidden rounded-t-2xl bg-white shadow-xl sm:rounded-2xl flex flex-col", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
+        className={cx("max-h-[92vh] w-full overflow-hidden rounded-t-2xl bg-white text-slate-900 shadow-xl sm:rounded-2xl flex flex-col", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp, Truck, Warehouse, LayoutDashboard } from "lucide-react";
+import { RotateCcw, Wrench, History, Settings, LogOut, Menu, X, ExternalLink, Boxes, TrendingUp, Truck, Warehouse, LayoutDashboard, Flame } from "lucide-react";
 import { useAuth } from "../lib/auth";
 import { api } from "../lib/api";
 import { cx } from "./ui";
@@ -75,6 +75,9 @@ export default function Layout({ children }) {
         </a>
       </div>
       <div className="border-t border-slate-100 p-3">
+        <a href="/black-friday" className="bf-btn mb-2 flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-black uppercase tracking-widest text-white">
+          <Flame className="h-4 w-4" /> Black Friday
+        </a>
         <div className="flex items-center gap-3 rounded-lg px-2 py-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand">
             {(user?.name || "?").slice(0, 1).toUpperCase()}

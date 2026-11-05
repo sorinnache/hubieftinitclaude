@@ -18,6 +18,7 @@ import Livrari from "./pages/Livrari";
 import ReceiveRun from "./pages/ReceiveRun";
 import Depot from "./pages/Depot";
 import Dashboard from "./pages/Dashboard";
+import BlackFriday from "./pages/BlackFriday";
 import RefusedRun from "./pages/RefusedRun";
 import PublicReturn from "./pages/PublicReturn";
 import PublicService from "./pages/PublicService";
@@ -46,6 +47,7 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/ecran" element={<ProtectedBare><Dashboard tv /></ProtectedBare>} />
+      <Route path="/black-friday" element={<ProtectedBare><BlackFriday /></ProtectedBare>} />
       <Route path="/retururi" element={<Protected><CaseList kind="return" /></Protected>} />
       <Route path="/retururi/:id" element={<Protected><ReturnDetail /></Protected>} />
       <Route path="/service" element={<Protected><CaseList kind="service" /></Protected>} />
