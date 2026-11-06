@@ -167,7 +167,7 @@ function TopProducts({ rows }) {
   );
 }
 
-function Footer({ days, start, end, now, lastOk, status }) {
+function Footer({ days, start, end, now, lastOk, status, cancelled = 0 }) {
   const today = todayRO();
   const s = new Date(start).getTime(), e = new Date(end).getTime() + 1000;
   const prog = Math.min(100, Math.max(0, ((now - s) / (e - s)) * 100));
@@ -190,7 +190,7 @@ function Footer({ days, start, end, now, lastOk, status }) {
       </div>
       <div className="flex items-center gap-2.5">
         <span className={cx("h-[0.8rem] w-[0.8rem] rounded-full", status === "live" ? "bg-bf-green bf-live" : status === "stale" ? "bg-amber-400" : "bg-rose-500")} />
-        <span>{status === "live" ? "Sincronizat" : status === "stale" ? "Date întârziate" : "Reconectare"} · {lastOk ? hms(lastOk) : "—"}</span>
+        <span>{cancelled > 0 ? `${cancelled} anulate · ` : ""}{status === "live" ? "Sincronizat" : status === "stale" ? "Date întârziate" : "Reconectare"} · {lastOk ? hms(lastOk) : "—"}</span>
       </div>
     </div>
   );
@@ -425,7 +425,7 @@ export default function BlackFriday() {
 
       {/* subsol */}
       <div className="mt-[1.25rem]">
-        <Footer days={d.days || []} start={d.start} end={d.end} now={now} lastOk={lastOk} status={status} />
+        <Footer days={d.days || []} start={d.start} end={d.end} now={now} lastOk={lastOk} status={status} cancelled={d.cancelled || 0} />
       </div>
 
       {/* notificare comandă nouă */}

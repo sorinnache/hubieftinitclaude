@@ -55,20 +55,27 @@ def _val(o: dict) -> float:
 
 
 async def loop():
-    """În perioada campaniei aduce comenzile modificate recent la fiecare 20 s (în plus față de dashboard)."""
-    await asyncio.sleep(90)
-    backfilled = False
+    """În perioada campaniei aduce comenzile din Shopify mai des decât dashboardul:
+    - la 20 s: comenzile modificate în ultimele 15 min (indexul de căutare Shopify poate întârzia câteva minute);
+    - la 5 min: ultimele 24 h;
+    - la 30 min: toată campania (prinde și anulările/editările vechi)."""
+    await asyncio.sleep(60)
+    last_day = last_full = 0.0
     while True:
         try:
             s = await get_settings()
             a, b = _period(s)
             now = datetime.now(timezone.utc)
             if a - timedelta(days=1) <= now <= b + timedelta(days=2) and await shopify._shop():
-                if not backfilled:
+                t = now.timestamp()
+                if t - last_full > 1800:
                     await profit._fetch(f"created_at:>='{_z(a)}'")
-                    backfilled = True
+                    last_full = last_day = t
+                elif t - last_day > 300:
+                    await profit._fetch(f"updated_at:>'{_z(now - timedelta(hours=24))}'")
+                    last_day = t
                 else:
-                    await profit._fetch(f"updated_at:>'{_z(now - timedelta(minutes=3))}'")
+                    await profit._fetch(f"updated_at:>'{_z(now - timedelta(minutes=15))}'")
                 await _set(last_sync=now_iso(), last_error=None)
                 await asyncio.sleep(20)
                 continue
