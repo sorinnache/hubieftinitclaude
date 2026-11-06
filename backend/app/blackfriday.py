@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from collections import defaultdict
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from zoneinfo import ZoneInfo
@@ -116,20 +117,25 @@ async def board(_: dict = Depends(get_current_user)):
                    "created_at": o.get("created_at"),
                    "items": sum(int(li.get("qty") or 0) for li in o.get("lines") or [])} for o in big]
 
-    # ritmul pe zile (pentru bara de jos)
+    # comenzile pe zile (ora României)
     days = []
     d = a
     while d < b:
         nd = min(d + timedelta(days=1), b)
         n = sum(1 for o in live if _z(d) <= o["created_at"] < _z(nd))
-        days.append({"day": d.strftime("%d.%m"), "orders": n})
+        days.append({"day": d.strftime("%d.%m"), "date": d.date().isoformat(), "start": d.isoformat(), "end": nd.isoformat(), "orders": n})
         d = nd
+    # valoarea comenzilor = totalul curent al comenzii (cu TVA, livrare și reduceri; după editări/rambursări), fără cele anulate
+    revenue = sum((Decimal(str(o.get("total") or o.get("total_original") or 0)) for o in live), Decimal("0"))
+    recent = [{"order_id": o.get("order_id"), "name": o.get("name"), "value": _val(o), "created_at": o.get("created_at")}
+              for o in sorted(live, key=lambda o: o.get("created_at") or "", reverse=True)[:10]]
 
     last = max((o.get("created_at") for o in live), default=None)
     st = await db.settings.find_one({"key": "blackfriday"}, {"_id": 0, "last_sync": 1, "last_error": 1}) or {}
     dash = await db.settings.find_one({"key": "dashboard"}, {"_id": 0, "last_sync": 1}) or {}
     return {"settings": s, "start": a.isoformat(), "end": (b - timedelta(seconds=1)).isoformat(),
-            "orders": len(live), "shipped": len(shipped), "units": units, "revenue": sum(_val(o) for o in live),
+            "orders": len(live), "shipped": len(shipped), "units": units, "revenue": float(revenue.quantize(Decimal("0.01"))),
+            "recent": recent,
             "cancelled": len(orders) - len(live), "top_products": top_products, "top_orders": top_orders,
             "days": days, "last_order_at": last, "last_sync": st.get("last_sync") or dash.get("last_sync"),
             "last_error": st.get("last_error"), "now": datetime.now(timezone.utc).isoformat()}

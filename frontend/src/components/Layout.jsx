@@ -75,7 +75,7 @@ export default function Layout({ children }) {
         </a>
       </div>
       <div className="border-t border-slate-100 p-3">
-        <a href="/black-friday" className="bf-btn mb-2 flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-black uppercase tracking-widest text-white">
+        <a href="/black-friday" className="bf-btn mb-2 flex items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-black uppercase tracking-widest">
           <Flame className="h-4 w-4" /> Black Friday
         </a>
         <div className="flex items-center gap-3 rounded-lg px-2 py-2">
