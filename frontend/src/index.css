@@ -50,7 +50,26 @@ html.embed, html.embed body { background: transparent; }
 .bf-toast { animation: bf-toast 4.5s ease-in-out forwards; }
 .bf-btn { background: linear-gradient(90deg, #111 0%, #3a3100 100%); border: 1px solid #FFD21A55; color: #FFD21A; }
 .bf-btn:hover { filter: brightness(1.2); }
+/* fundal animat */
+.bf-fx > * { position: absolute; }
+.bf-glow { border-radius: 50%; filter: blur(80px); opacity: .35; will-change: transform; }
+.bf-glow-a { width: 55vw; height: 55vw; left: -18vw; top: -28vw; background: radial-gradient(circle, rgba(255,210,26,.55), transparent 65%); animation: bf-drift-a 16s ease-in-out infinite; }
+.bf-glow-b { width: 45vw; height: 45vw; right: -15vw; bottom: -22vw; background: radial-gradient(circle, rgba(255,170,0,.45), transparent 65%); animation: bf-drift-b 20s ease-in-out infinite; }
+.bf-glow-c { width: 30vw; height: 30vw; left: 40vw; top: 30vh; background: radial-gradient(circle, rgba(255,210,26,.25), transparent 65%); animation: bf-drift-c 24s ease-in-out infinite; }
+@keyframes bf-drift-a { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(10vw, 6vh) scale(1.15); } }
+@keyframes bf-drift-b { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-8vw, -8vh) scale(1.2); } }
+@keyframes bf-drift-c { 0%,100% { transform: translate(0,0); opacity: .2; } 50% { transform: translate(-12vw, 10vh); opacity: .45; } }
+.bf-beam { top: -20vh; height: 140vh; width: 18vw; background: linear-gradient(90deg, transparent, rgba(255,210,26,.09), rgba(255,255,255,.05), rgba(255,210,26,.09), transparent); transform: skewX(-22deg); will-change: transform; }
+.bf-beam-a { animation: bf-sweep 14s linear infinite; }
+.bf-beam-b { animation: bf-sweep 14s linear 7s infinite; width: 9vw; }
+@keyframes bf-sweep { 0% { transform: translateX(-40vw) skewX(-22deg); } 100% { transform: translateX(140vw) skewX(-22deg); } }
+.bf-grid { inset: 0; background-image: linear-gradient(rgba(255,210,26,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255,210,26,.045) 1px, transparent 1px); background-size: 4rem 4rem; mask-image: radial-gradient(ellipse at center, rgba(0,0,0,.9), transparent 75%); animation: bf-grid 30s linear infinite; }
+@keyframes bf-grid { 0% { background-position: 0 0, 0 0; } 100% { background-position: 4rem 4rem, 4rem 4rem; } }
+.bf-spark { bottom: -2rem; border-radius: 50%; background: #FFD21A; box-shadow: 0 0 10px rgba(255,210,26,.9); opacity: 0; animation: bf-rise 12s linear infinite; will-change: transform, opacity; }
+@keyframes bf-rise { 0% { transform: translateY(0) translateX(0); opacity: 0; } 10% { opacity: .9; } 90% { opacity: .5; } 100% { transform: translateY(-110vh) translateX(4vw); opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
+  .bf-glow, .bf-beam, .bf-grid, .bf-spark { animation: none !important; }
+  .bf-beam, .bf-spark { display: none; }
   .bf-mascot, .bf-mascot-cheer, .bf-live, .bf-flash, .bf-flash-yellow, .bf-row { animation: none !important; transition: none !important; }
   .bf-toast { animation: bf-toast 4.5s step-end forwards; }
 }

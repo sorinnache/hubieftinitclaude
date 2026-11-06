@@ -368,7 +368,7 @@ export default function BlackFriday() {
   if (!d) {
     return (
       <div className="bf-bg flex min-h-screen flex-col items-center justify-center gap-4 text-bf-muted">
-        <img src="/ieftinit-logo.png" alt="IEFTINIT.RO" className="h-[3rem] opacity-80" />
+        <img src="/bf-logo-white.png" alt="IEFTINIT.RO" className="h-[3rem] opacity-80" />
         {initErr ? <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-5 py-3 text-[1.2rem] text-rose-300">Nu s-au putut încărca datele: {initErr}. Reîncerc automat…</div>
           : <div className="text-[1.3rem]">Se încarcă datele campaniei…</div>}
       </div>
@@ -379,9 +379,16 @@ export default function BlackFriday() {
   const liveOk = status === "live";
   return (
     <div className="bf-bg relative flex h-[100dvh] flex-col overflow-hidden px-[2.75rem] py-[2rem] text-bf-text">
+      {/* fundal animat (energie Black Friday) */}
+      <div className="bf-fx pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+        <div className="bf-glow bf-glow-a" /><div className="bf-glow bf-glow-b" /><div className="bf-glow bf-glow-c" />
+        <div className="bf-beam bf-beam-a" /><div className="bf-beam bf-beam-b" />
+        <div className="bf-grid" />
+        {Array.from({ length: 14 }, (_, i) => <span key={i} className="bf-spark" style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i * 1.7) % 9}s`, animationDuration: `${9 + (i % 5) * 2}s`, width: `${0.25 + (i % 3) * 0.15}rem`, height: `${0.25 + (i % 3) * 0.15}rem` }} />)}
+      </div>
       {/* antet */}
       <div className="flex items-center gap-6">
-        <img src="/ieftinit-logo.png" alt="IEFTINIT.RO" className="h-[3.8rem] w-auto" />
+        <img src="/bf-logo-white.png" alt="IEFTINIT.RO" className="h-[3.8rem] w-auto" />
         <div className="h-[3.6rem] w-px bg-bf-line" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-4">
