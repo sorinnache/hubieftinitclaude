@@ -70,14 +70,18 @@ function Countdown({ now, start, end }) {
   );
 }
 
-function Kpi({ icon: Icon, label, value, sub, flash }) {
+function Kpi({ icon: Icon, label, value, sub, flash, flashOnChange }) {
   const v = useCount(value);
+  const [hit, setHit] = useState(0);
+  const first = useRef(true);
+  useEffect(() => { if (first.current) { first.current = false; return; } if (flashOnChange) setHit((h) => h + 1); }, [value]); // eslint-disable-line
+  const key = `${flash || 0}-${hit}`;
   return (
-    <div className={cx("bf-card relative flex flex-col items-center justify-center overflow-hidden px-4 py-5 text-center", flash && "bf-flash")}>
+    <div key={key} className={cx("bf-card relative flex flex-col items-center justify-center overflow-hidden px-4 py-5 text-center", (flash || hit) && "bf-flash")}>
       <div className="flex items-center gap-3 text-[1.25rem] font-extrabold uppercase leading-tight tracking-wider text-bf-text">
         <Icon className="h-[2rem] w-[2rem] text-bf-yellow" strokeWidth={2.2} /> <span className="text-left">{label}</span>
       </div>
-      <div className="bf-num mt-2 text-[5.6rem] font-black leading-none text-bf-text">{num(v)}</div>
+      <div className={cx("bf-num mt-2 text-[5.6rem] font-black leading-none text-bf-text", (flash || hit) && "bf-numpop")}>{num(v)}</div>
       <div className="mt-3 min-h-[1.4rem] text-[1.15rem] text-bf-muted">{sub || " "}</div>
       <div className="absolute inset-x-0 bottom-0 h-[0.3rem] bg-bf-yellow" />
     </div>
@@ -382,8 +386,6 @@ export default function BlackFriday() {
       {/* fundal animat (energie Black Friday) */}
       <div className="bf-fx pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
         <div className="bf-glow bf-glow-a" /><div className="bf-glow bf-glow-b" /><div className="bf-glow bf-glow-c" />
-        <div className="bf-beam bf-beam-a" /><div className="bf-beam bf-beam-b" />
-        <div className="bf-grid" />
         {Array.from({ length: 14 }, (_, i) => <span key={i} className="bf-spark" style={{ left: `${(i * 37) % 100}%`, animationDelay: `${(i * 1.7) % 9}s`, animationDuration: `${9 + (i % 5) * 2}s`, width: `${0.25 + (i % 3) * 0.15}rem`, height: `${0.25 + (i % 3) * 0.15}rem` }} />)}
       </div>
       {/* antet */}
@@ -409,7 +411,7 @@ export default function BlackFriday() {
       <div className="mt-[1.5rem] grid h-[16.5rem] grid-cols-[46fr_54fr] gap-[1.5rem]">
         <Revenue value={d.revenue} flash={flash} label="Valoare totală comenzi" period={`Campanie · ${period.replace(/ \d{4}$/, "")}`} />
         <div className="grid grid-cols-3 gap-[1.5rem]">
-          <Kpi icon={ShoppingCart} label={<>Comenzi<br />plasate</>} value={d.orders} flash={flash} sub={d.last_order_at ? `Ultima comandă · ${hm(d.last_order_at)}` : "Nicio comandă încă"} />
+          <Kpi icon={ShoppingCart} label={<>Comenzi<br />plasate</>} value={d.orders} flash={flash} flashOnChange sub={d.last_order_at ? `Ultima comandă · ${hm(d.last_order_at)}` : "Nicio comandă încă"} />
           <Kpi icon={Truck} label={<>Comenzi<br />expediate</>} value={d.shipped} sub={d.orders ? `${Math.round((d.shipped / d.orders) * 100)}% din comenzi` : "—"} />
           <Kpi icon={Package} label={<>Produse<br />comandate</>} value={d.units} sub={d.orders ? `${(d.units / d.orders).toLocaleString("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} produse / comandă` : "—"} />
         </div>
