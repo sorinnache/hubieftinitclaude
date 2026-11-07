@@ -281,6 +281,8 @@ def cost_at(v: dict, iso: str):
 def _cost_update(old: dict, sc) -> dict:
     """Costul din Shopify e „prețul obișnuit” de achiziție. Hub-ul ține costul mediu ponderat (CMP);
     îl suprascrie din Shopify doar când costul din Shopify se schimbă (l-ai modificat acolo)."""
+    if old is not None and "shopify_cost" not in old and any(h.get("source") == "intrare" for h in old.get("cost_history") or []):
+        return {"shopify_cost": sc}  # există deja intrări cu preț — păstrăm costul mediu
     if old is None or "shopify_cost" not in old:
         out = {"shopify_cost": sc, "cost": sc}
         if not (old or {}).get("cost_history") and sc:
