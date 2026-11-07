@@ -183,21 +183,23 @@ async def compute(period: str, settings: Optional[dict] = None, detail: bool = F
     a, b = _month_bounds(period)
     vat = float(s["vat_rate"]) / 100
     costs = {v["variant_id"]: v for v in await db.stock_variants.find(
-        {}, {"_id": 0, "variant_id": 1, "cost": 1, "product_title": 1, "variant_title": 1, "sku": 1, "untracked": 1}).to_list(50000)}
+        {}, {"_id": 0, "variant_id": 1, "cost": 1, "cost_history": 1, "product_title": 1, "variant_title": 1, "sku": 1,
+             "untracked": 1}).to_list(50000)}
 
+    from . import stock as _stock
     # vânzări: comenzile PLASATE în lună care au ajuns la statusul DELIVERED (oricând au fost livrate)
     gross, orders_delivered, cogs_net, missing = 0.0, 0, 0.0, {}
     placed = await db.profit_orders.count_documents({"created_at": {"$gte": a, "$lt": b}, "test": {"$ne": True}})
     async for o in db.profit_orders.find({"created_at": {"$gte": a, "$lt": b}, "delivered_at": {"$ne": None},
                                           "cancelled": False, "test": {"$ne": True}},
-                                         {"_id": 0, "total": 1, "lines": 1}):
+                                         {"_id": 0, "total": 1, "lines": 1, "created_at": 1}):
         orders_delivered += 1
         gross += o["total"]
         for l in o["lines"]:
             if not l["variant_id"]:
                 continue  # linii fără produs (ex. Livrare prioritară)
             v = costs.get(l["variant_id"]) or {}
-            c = v.get("cost")
+            c = _stock.cost_at(v, o.get("created_at")) if v else None  # costul mediu valabil la data comenzii
             if c is None or float(c) <= 0:
                 if v.get("untracked"):
                     continue  # garanții / servicii marcate „nu urmări stocul”

@@ -323,6 +323,8 @@ function ItemModal({ vid, onClose, onChanged }) {
             </div>
           )}
 
+          {!d.is_bundle && d.cost !== undefined && <CostBox d={d} />}
+
           {d.reserved_orders?.length > 0 && (
             <div>
               <div className="mb-1.5 text-sm font-semibold">Rezervat pentru comenzile confirmate</div>
@@ -749,9 +751,51 @@ function GuidedInventoryCard() {
   );
 }
 
+const leiC = (v) => (v === null || v === undefined ? "—" : `${Number(v).toLocaleString("ro-RO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} lei`);
+
+function CostBox({ d }) {
+  const [open, setOpen] = useState(false);
+  const h = d.cost_history || [];
+  const diff = d.cost && d.shopify_cost && Math.abs(d.cost - d.shopify_cost) >= 0.005;
+  return (
+    <div className="rounded-xl p-4 ring-1 ring-slate-200">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold">Cost de achiziție (fără TVA)</div>
+          <div className="mt-0.5 text-xs text-slate-500">Cost mediu ponderat: se recalculează la fiecare intrare de marfă. Profitul folosește costul valabil la data comenzii.</div>
+        </div>
+        <div className="flex gap-3 text-right">
+          <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-[11px] text-slate-500">Cost mediu actual</div><div className="text-lg font-bold tabular">{leiC(d.cost)}</div></div>
+          <div className="rounded-lg bg-slate-50 px-3 py-2"><div className="text-[11px] text-slate-500">Preț obișnuit (Shopify)</div><div className="text-lg font-bold tabular text-slate-600">{leiC(d.shopify_cost)}</div></div>
+        </div>
+      </div>
+      {diff && <div className="mt-2 text-xs text-amber-700">Costul mediu diferă de cel din Shopify pentru că ai primit marfă la alt preț. E normal — Shopify rămâne prețul obișnuit de la furnizor.</div>}
+      {h.length > 0 && (
+        <div className="mt-3">
+          <button onClick={() => setOpen(!open)} className="text-xs font-medium text-brand hover:underline">{open ? "Ascunde" : "Vezi"} istoricul costului ({h.length})</button>
+          {open && (
+            <div className="mt-2 divide-y divide-slate-100 rounded-lg ring-1 ring-slate-100">
+              {h.map((x, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <div className="font-medium text-slate-800">{x.source === "intrare" ? `Intrare ${x.qty} buc × ${leiC(x.price)}${x.manual_price ? "" : " (preț obișnuit)"}` : "Cost modificat în Shopify"}</div>
+                    <div className="text-slate-500">{fmtDateTime(x.at)}{x.source === "intrare" ? ` · stoc înainte ${x.stock_before} buc la ${leiC(x.prev)}` : ""}{x.actor ? ` · ${x.actor}` : ""}</div>
+                  </div>
+                  <div className="shrink-0 text-right"><div className="text-[11px] text-slate-400">cost nou</div><div className="font-bold tabular">{leiC(x.cost)}</div></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Receipts() {
   const toast = useToast();
   const nav = useNavigate();
+  const { isAdmin } = useAuth();
   const [list, setList] = useState(null);
   const [form, setForm] = useState({ supplier: "", supplier_cui: "", document: "", note: "" });
   const [sups, setSups] = useState([]);
@@ -763,7 +807,7 @@ function Receipts() {
   const save = async () => {
     setBusy(true);
     try {
-      await api("/stock/receipts", { method: "POST", body: { ...form, items: lines.map((l) => ({ variant_id: l.variant_id, qty: Number(l.qty) })) } });
+      await api("/stock/receipts", { method: "POST", body: { ...form, items: lines.map((l) => ({ variant_id: l.variant_id, qty: Number(l.qty), ...(isAdmin && Number(String(l.price || "").replace(",", ".")) > 0 ? { unit_cost: Number(String(l.price).replace(",", ".")) } : {}) })) } });
       toast.success("Intrare înregistrată, stocul a crescut");
       setLines([]); setForm({ supplier: "", supplier_cui: "", document: "", note: "" }); load();
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
@@ -801,13 +845,22 @@ function Receipts() {
               <div key={l.variant_id} className="mb-2 flex items-center gap-2">
                 <Thumb src={l.image} />
                 <div className="min-w-0 flex-1 truncate text-sm">{productName(l)}</div>
-                <Input type="number" min={1} className="w-24 text-right" value={l.qty} autoFocus={i === lines.length - 1}
+                <Input type="number" min={1} className="w-24 text-right" value={l.qty} autoFocus={i === lines.length - 1} placeholder="buc"
                   onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+                {isAdmin && !l.is_bundle && (
+                  <div className="relative">
+                    <Input inputMode="decimal" className="w-32 pr-9 text-right" value={l.price || ""} placeholder="preț obișnuit"
+                      title="Preț de achiziție / buc, FĂRĂ TVA. Lasă gol dacă e prețul obișnuit (costul din Shopify)."
+                      onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, price: e.target.value.replace(/[^\d.,]/g, "") } : x)))} />
+                    <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">lei</span>
+                  </div>
+                )}
                 <button onClick={() => setLines(lines.filter((_, j) => j !== i))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button>
               </div>
             ))}
             <ProductPicker exclude={lines.map((l) => l.variant_id)} placeholder="Caută și adaugă produs…"
-              onPick={(r) => setLines([...lines, { ...r, qty: "" }])} />
+              onPick={(r) => setLines([...lines, { ...r, qty: "", price: "" }])} />
+            {isAdmin && lines.length > 0 && <div className="mt-1 text-xs text-slate-500">Preț de achiziție / buc <strong>fără TVA</strong> — completează doar dacă diferă de prețul obișnuit (costul din Shopify). Costul produsului se recalculează automat ca medie ponderată.</div>}
           </div>
           <Field label="Observații"><Textarea rows={2} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
           <div className="flex justify-end">

@@ -257,9 +257,73 @@ def _cost(v: dict):
         return None
 
 
+EPOCH = "1970-01-01T00:00:00Z"
+
+
+def _zts() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cost_at(v: dict, iso: str):
+    """Costul de achiziție (fără TVA) valabil la data `iso` — din istoricul costului mediu ponderat."""
+    h = v.get("cost_history") or []
+    if not h:
+        return v.get("cost")
+    c = h[0].get("cost")
+    for e in h:
+        if (e.get("at") or "") <= (iso or ""):
+            c = e.get("cost")
+        else:
+            break
+    return c
+
+
+def _cost_update(old: dict, sc) -> dict:
+    """Costul din Shopify e „prețul obișnuit” de achiziție. Hub-ul ține costul mediu ponderat (CMP);
+    îl suprascrie din Shopify doar când costul din Shopify se schimbă (l-ai modificat acolo)."""
+    if old is None or "shopify_cost" not in old:
+        out = {"shopify_cost": sc, "cost": sc}
+        if not (old or {}).get("cost_history") and sc:
+            out["cost_history"] = [{"at": EPOCH, "cost": sc, "source": "shopify"}]
+        return out
+    if sc != old.get("shopify_cost"):
+        out = {"shopify_cost": sc}
+        if sc:
+            out["cost"] = sc
+            out["cost_history"] = (old.get("cost_history") or []) + [{"at": _zts(), "cost": sc, "source": "shopify",
+                                                                       "prev": old.get("cost")}]
+        return out
+    return {}
+
+
+async def apply_receipt_cost(vid: str, qty: int, unit_cost, receipt_id: str, actor: str):
+    """Recalculează costul mediu ponderat la o intrare de marfă (înainte de a crește stocul).
+    Fără preț introdus → se consideră prețul obișnuit (costul din Shopify)."""
+    db = get_db()
+    v = await _variant(vid)
+    if not v or is_bundle(v):
+        return None
+    price = float(unit_cost) if unit_cost and float(unit_cost) > 0 else v.get("shopify_cost")
+    if not price:
+        return None
+    price = float(price)
+    oh = max(int(v.get("on_hand") or 0), 0)
+    old = v.get("cost")
+    new = price if not old or float(old) <= 0 or oh == 0 else (oh * float(old) + qty * price) / (oh + qty)
+    new = round(new, 4)
+    hist = v.get("cost_history") or ([{"at": EPOCH, "cost": float(old), "source": "shopify"}] if old else [])
+    hist.append({"at": _zts(), "cost": new, "source": "intrare", "price": price, "qty": qty, "stock_before": oh,
+                 "prev": float(old) if old else None, "receipt_id": receipt_id, "actor": actor,
+                 "manual_price": bool(unit_cost and float(unit_cost) > 0)})
+    await db.stock_variants.update_one({"variant_id": vid}, {"$set": {"cost": new, "cost_history": hist[-200:]}})
+    return price
+
+
 async def sync_products() -> dict:
     db = get_db()
     after, seen, n = None, set(), 0
+    prev = {x["variant_id"]: x async for x in db.stock_variants.find(
+        {}, {"_id": 0, "variant_id": 1, "cost": 1, "shopify_cost": 1, "cost_history": 1})}
     cost_error = None
     while True:
         data, err = await _variants_page(after)
@@ -277,7 +341,7 @@ async def sync_products() -> dict:
                 "$set": {"product_id": _tail(p.get("id")), "product_title": p.get("title") or "",
                          "variant_title": "" if vt == "Default Title" else vt, "sku": v.get("sku") or "",
                          "image": img, "status": p.get("status") or "ACTIVE", "deleted": False,
-                         "updated_at": now_iso(), **({} if err else {"cost": _cost(v)})},
+                         "updated_at": now_iso(), **({} if err else _cost_update(prev.get(vid), _cost(v)))},
                 "$setOnInsert": {"on_hand": 0, "created_at": now_iso()},
             }, upsert=True)
             n += 1
@@ -617,13 +681,17 @@ async def summary(_: dict = Depends(get_current_user)):
 
 
 @router.get("/items/{vid}")
-async def item_detail(vid: str, _: dict = Depends(get_current_user)):
+async def item_detail(vid: str, user: dict = Depends(get_current_user)):
     db = get_db()
     v = await _variant(vid)
     if not v:
         raise HTTPException(404, "Produs inexistent")
     reserved = await reserved_map()
     row = _row(v, reserved)
+    if user.get("role") == "admin":
+        row["cost"] = v.get("cost")
+        row["shopify_cost"] = v.get("shopify_cost")
+        row["cost_history"] = [h for h in reversed(v.get("cost_history") or []) if h.get("at") != EPOCH][:30]
     row["reserved_orders"] = reserved.get(vid, {}).get("orders", [])
     row["movements"] = await _enrich_movements(
         await db.stock_movements.find({"variant_id": vid}, {"_id": 0}).sort("created_at", -1).to_list(300))
@@ -790,7 +858,7 @@ async def save_inventory(body: InventoryBody, request: Request, user: dict = Dep
 class ReceiptItem(BaseModel):
     variant_id: str
     qty: int = Field(gt=0)
-    unit_cost: Optional[float] = None
+    unit_cost: Optional[float] = Field(default=None, ge=0)  # preț de achiziție / buc, FĂRĂ TVA
 
 
 class ReceiptBody(BaseModel):
@@ -811,10 +879,15 @@ async def create_receipt(body: ReceiptBody, request: Request, user: dict = Depen
     for it in body.items:
         if not await _variant(it.variant_id):
             raise HTTPException(400, f"Produs inexistent: {it.variant_id}")
+    if any(it.unit_cost for it in body.items) and user.get("role") != "admin":
+        raise HTTPException(403, "Doar administratorul poate introduce prețul de achiziție")
     for it in body.items:
+        price = await apply_receipt_cost(it.variant_id, it.qty, it.unit_cost, rid, user["name"])
         for m in await move(it.variant_id, it.qty, "intrare", ref=ref, note=body.note or "", actor=user["name"],
                             ref_kind="receipt", ref_id=rid, expand_bundle=True):
             await mark_counted(m["variant_id"], "intrare")
+            if price and m["variant_id"] == it.variant_id:
+                await db.stock_movements.update_one({"id": m["id"]}, {"$set": {"unit_cost": price}})
     doc = {"id": rid, "supplier": body.supplier, "supplier_cui": re.sub(r"\D", "", body.supplier_cui or ""),
            "document": body.document, "note": body.note,
            "items": [i.model_dump() for i in body.items], "created_by": user["name"], "created_at": now_iso()}

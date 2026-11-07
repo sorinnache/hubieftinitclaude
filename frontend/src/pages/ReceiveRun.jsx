@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { X, Search, Minus, Plus, Package, ChevronLeft, CheckCircle2 } from "lucide-react";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { Button, PageLoader, cx, useToast } from "../components/ui";
 
 const name = (i) => [i.product_title, i.variant_title].filter(Boolean).join(" — ");
@@ -14,6 +15,8 @@ export default function ReceiveRun() {
   const [q, setQ] = useState("");
   const [pick, setPick] = useState(null);
   const [qty, setQty] = useState("");
+  const [price, setPrice] = useState("");
+  const { isAdmin } = useAuth();
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState([]);
   const searchRef = useRef(null);
@@ -35,11 +38,11 @@ export default function ReceiveRun() {
     if (!n || n <= 0) { toast.error("Scrie câte bucăți au venit"); return; }
     setBusy(true);
     try {
-      await api("/stock/receipts", { method: "POST", body: { supplier: "", document: "", note: "Intrare de pe telefon", items: [{ variant_id: pick.variant_id, qty: n }] } });
+      await api("/stock/receipts", { method: "POST", body: { supplier: "", document: "", note: "Intrare de pe telefon", items: [{ variant_id: pick.variant_id, qty: n, ...(isAdmin && Number(price.replace(",", ".")) > 0 ? { unit_cost: Number(price.replace(",", ".")) } : {}) }] } });
       toast.success(`+${n} buc · ${name(pick)}`);
       setDone([{ ...pick, n, at: Date.now() }, ...done]);
       setItems(items.map((x) => (x.variant_id === pick.variant_id ? { ...x, on_hand: x.on_hand + n } : x)));
-      setPick(null); setQty(""); setQ("");
+      setPick(null); setQty(""); setQ(""); setPrice("");
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
   const step = (d) => setQty((v) => String(Math.max(0, (parseInt(v || "0", 10) || 0) + d)));
@@ -48,7 +51,7 @@ export default function ReceiveRun() {
     <div className="fixed inset-0 z-40 flex flex-col bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
         {pick
-          ? <button onClick={() => { setPick(null); setQty(""); }} className="-ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
+          ? <button onClick={() => { setPick(null); setQty(""); setPrice(""); }} className="-ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><ChevronLeft className="h-5 w-5" /></button>
           : <button onClick={() => nav("/stocuri?tab=intrari")} className="-ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>}
         <div className="text-center">
           <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Intrare marfă</div>
@@ -73,6 +76,13 @@ export default function ReceiveRun() {
                 className="h-20 w-36 rounded-2xl border-0 text-center text-5xl font-bold tabular ring-2 ring-inset ring-slate-300 outline-none focus:ring-brand" />
               <button type="button" onClick={() => step(1)} className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-slate-700 active:bg-slate-200"><Plus className="h-7 w-7" /></button>
             </div>
+            {isAdmin && (
+              <div className="mt-5 w-full max-w-xs">
+                <div className="mb-1 text-xs font-medium text-slate-500">Preț achiziție / buc, fără TVA (opțional)</div>
+                <input value={price} onChange={(e) => setPrice(e.target.value.replace(/[^\d.,]/g, ""))} inputMode="decimal" placeholder="gol = preț obișnuit"
+                  className="h-12 w-full rounded-xl border border-slate-300 px-4 text-center text-lg tabular focus:border-brand focus:outline-none" />
+              </div>
+            )}
             {parseInt(qty, 10) > 0 && <div className="mt-3 text-sm text-slate-500">După salvare: <strong className="text-emerald-700">{pick.on_hand + parseInt(qty, 10)} buc</strong> în depozit</div>}
           </div>
           <div className="border-t border-slate-200 px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))]">
