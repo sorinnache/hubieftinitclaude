@@ -16,6 +16,7 @@ const TYPES = {
   refuzat: { label: "Colet refuzat", cls: "bg-violet-50 text-violet-700 ring-violet-200" },
   ajustare: { label: "Ajustare", cls: "bg-orange-50 text-orange-700 ring-orange-200" },
   inlocuire: { label: "Înlocuire în pachet", cls: "bg-fuchsia-50 text-fuchsia-700 ring-fuchsia-200" },
+  schimb: { label: "Trimis la schimb", cls: "bg-rose-50 text-rose-700 ring-rose-200" },
 };
 
 const bundleSig = (list) => JSON.stringify((list || []).map((c) => [c.variant_id, Number(c.qty), (c.alternates || []).map((a) => a.variant_id)]));

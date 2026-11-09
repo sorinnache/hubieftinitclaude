@@ -60,6 +60,19 @@ def service_received(number: str, name: str, order: str, problem: str) -> tuple[
 <p>Păstrează acest număr pentru orice întrebare legată de cerere.</p>"""))
 
 
+def exchange_sent(number: str, name: str, awb: str) -> tuple[str, str]:
+    n = html.escape(name or "")
+    return (f"Retur {number} — îți trimitem produsul la schimb", _layout("Produsul nou este pe drum", f"""
+<p>Salut {n},</p>
+<p>Am aprobat schimbul pentru cererea <strong>{number}</strong>. Îți trimitem produsul nou prin <strong>GLS</strong>,
+cu serviciul de <strong>schimb</strong>: când curierul îți livrează coletul nou, ia de la tine pe loc produsul defect.</p>
+{_box("AWB GLS", awb)}
+<p><strong>Te rugăm să ai pregătit produsul defect:</strong></p>
+<ul><li>ambalat corespunzător, cu toate accesoriile primite;</li>
+<li>îl predai curierului în momentul în care primești coletul nou — nu este nevoie să printezi nimic.</li></ul>
+<p>Poți urmări coletul aici: <a href="https://gls-group.com/RO/ro/urmarire-colet/?match={awb}">urmărire AWB {awb}</a></p>"""))
+
+
 def pickup_scheduled(number: str, name: str, awb: str, pickup_date: str) -> tuple[str, str]:
     n = html.escape(name or "")
     return (f"Retur {number} — curierul GLS vine să ridice coletul", _layout("Am chemat curierul pentru returul tău", f"""

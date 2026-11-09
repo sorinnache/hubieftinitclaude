@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Truck, Printer, RefreshCw, ExternalLink, XCircle, Pencil, ChevronDown, ChevronUp } from "lucide-react";
+import { Truck, Printer, RefreshCw, ExternalLink, XCircle, Pencil, ChevronDown, ChevronUp, Repeat, Search, X, Package } from "lucide-react";
 import { api } from "../lib/api";
 import { fmtDate, fmtDateTime, glsTrackUrl, money, RETURN_TYPES, SHIP_STATUS } from "../lib/format";
 import { Button, Card, Field, Input, Modal, PageLoader, Pill, Select, Textarea, cx, useToast } from "../components/ui";
@@ -120,8 +120,24 @@ function RefundCard({ item, onPatch }) {
   );
 }
 
+const EXCHANGE_STATUS = {
+  created: "AWB creat — de predat curierului",
+  out_for_pickup: "Curierul vine la depozit",
+  picked_up: "Preluat din depozit",
+  in_transit: "În tranzit spre client",
+  at_hub: "În depozitul GLS",
+  out_for_delivery: "În livrare la client",
+  delivered: "Livrat clientului",
+};
+
+function todayISO() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
 function ShipPill({ s }) {
-  const m = SHIP_STATUS[s.status] || { label: s.status_description || s.status, cls: "bg-slate-50 text-slate-600 ring-slate-200" };
+  const base = SHIP_STATUS[s.status] || { label: s.status_description || s.status, cls: "bg-slate-50 text-slate-600 ring-slate-200" };
+  const m = s.kind === "exchange" && EXCHANGE_STATUS[s.status] ? { ...base, label: EXCHANGE_STATUS[s.status] } : base;
   return <Pill className={m.cls}>{m.label}</Pill>;
 }
 
@@ -136,6 +152,33 @@ function CourierCard({ item, onChanged }) {
   const [busy, setBusy] = useState("");
   const [form, setForm] = useState(null);
   const [showTrack, setShowTrack] = useState(false);
+  const isExchange = item.return_type === "exchange";
+  const [xmodal, setXmodal] = useState(false);
+  const [xform, setXform] = useState(null);
+
+  const openExchange = async () => {
+    setXmodal(true);
+    setXform(null);
+    try {
+      const a = await api(`/returns/${item.id}/pickup-address`);
+      const its = (item.items || []).filter((i) => i.variant_id).map((i) => ({
+        variant_id: String(i.variant_id), qty: Number(i.quantity) || 1,
+        title: [i.title, i.variant_title].filter(Boolean).join(" — "), sku: i.sku || "", image: i.image || null,
+      }));
+      setXform({ client: a, parcel_count: 1, ship_date: todayISO(), content: "Colet schimb", items: its, deduct_stock: true, notify_customer: true });
+    } catch (e) { toast.error(e.message); setXmodal(false); }
+  };
+
+  const createExchange = async () => {
+    setBusy("xcreate");
+    try {
+      const s = await api(`/returns/${item.id}/exchange`, { method: "POST", body: { ...xform, items: xform.items.map(({ variant_id, qty, title }) => ({ variant_id, qty: Number(qty) || 1, title })) } });
+      toast.success(`AWB schimb creat · ${s.awb}`);
+      setXmodal(false);
+      onChanged();
+      window.open(`/api/shipments/${s.id}/label`, "_blank");
+    } catch (e) { toast.error(e.message); } finally { setBusy(""); }
+  };
 
   const openModal = async () => {
     setModal(true);
@@ -164,13 +207,13 @@ function CourierCard({ item, onChanged }) {
   const setP = (k, v) => setForm((f) => ({ ...f, pickup: { ...f.pickup, [k]: v } }));
 
   return (
-    <Card title={<span className="inline-flex items-center gap-2"><Truck className="h-4 w-4" /> Curier GLS — ridicare de la client</span>}>
+    <Card title={<span className="inline-flex items-center gap-2">{isExchange ? <Repeat className="h-4 w-4" /> : <Truck className="h-4 w-4" />} {isExchange ? "Curier GLS — colet la schimb" : "Curier GLS — ridicare de la client"}</span>}>
       <div className="px-5 py-4">
         {active ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <div className="text-xs text-slate-500">AWB retur {active.manual && "(atașat manual)"}</div>
+                <div className="text-xs text-slate-500">{active.kind === "exchange" ? "AWB colet la schimb" : "AWB retur"} {active.manual && "(atașat manual)"}</div>
                 <div className="font-mono text-lg font-bold">{active.awb}</div>
               </div>
               <ShipPill s={active} />
@@ -179,7 +222,17 @@ function CourierCard({ item, onChanged }) {
               {active.status_description}
               {active.last_event_at && ` · ${fmtDateTime(active.last_event_at)}`}
             </div>
-            {active.pickup_date && <div className="text-xs text-slate-500">Ridicare programată din {fmtDate(active.pickup_date)} · creat de {active.created_by || "—"}</div>}
+            {active.kind !== "exchange" && active.pickup_date && <div className="text-xs text-slate-500">Ridicare programată din {fmtDate(active.pickup_date)} · creat de {active.created_by || "—"}</div>}
+            {active.kind === "exchange" && (
+              <div className="space-y-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-600">
+                <div>Pleacă din depozit pe <strong>{fmtDate(active.ship_date)}</strong> · creat de {active.created_by || "—"}</div>
+                {(active.items || []).length > 0 && (
+                  <div>Produs trimis: {active.items.map((i) => `${i.qty} × ${i.title || i.variant_id}`).join(", ")}
+                    {(active.stock_moved || []).length > 0 ? " · scăzut din stoc" : " · nescăzut din stoc"}</div>
+                )}
+                <div>Curierul livrează coletul nou și ridică pe loc produsul defect, pe care îl aduce la depozit (GLS ExchangeService).</div>
+              </div>
+            )}
             {active.sync_error && <div className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">Ultima actualizare GLS: {active.sync_error}</div>}
             <div className="no-print flex flex-wrap gap-2 pt-1">
               {!active.manual && (
@@ -195,7 +248,7 @@ function CourierCard({ item, onChanged }) {
               </a>
               {!["delivered", "picked_up", "in_transit", "at_hub", "out_for_delivery"].includes(active.status) && (
                 <Button size="sm" variant="danger" loading={busy === "cancel"}
-                  onClick={() => window.confirm(`Anulezi AWB ${active.awb}? ${active.manual ? "" : "Ridicarea va fi anulată și la GLS."}`) &&
+                  onClick={() => window.confirm(`Anulezi AWB ${active.awb}? ${active.manual ? "" : active.kind === "exchange" ? "AWB-ul va fi anulat și la GLS, iar produsul revine în stoc." : "Ridicarea va fi anulată și la GLS."}`) &&
                     act("cancel", () => api(`/shipments/${active.id}/cancel`, { method: "POST" }))}>
                   <XCircle className="h-3.5 w-3.5" /> Anulează
                 </Button>
@@ -219,8 +272,18 @@ function CourierCard({ item, onChanged }) {
           </div>
         ) : (
           <div className="no-print space-y-3">
-            <p className="text-sm text-slate-600">Niciun curier chemat încă. GLS va veni la adresa clientului și va aduce coletul la depozit.</p>
-            <Button onClick={openModal} className="w-full"><Truck className="h-4 w-4" /> Cheamă curierul la client</Button>
+            {isExchange ? (
+              <>
+                <p className="text-sm text-slate-600">Clientul cere <strong>schimb</strong>: emitem noi primii AWB-ul. Pleacă produsul nou din depozit, iar curierul GLS ridică de la client produsul defect în momentul livrării.</p>
+                <Button onClick={openExchange} className="w-full"><Repeat className="h-4 w-4" /> Emite AWB colet la schimb</Button>
+                <button onClick={openModal} className="w-full text-center text-xs text-slate-500 hover:text-slate-800">Vrei doar să ridici produsul de la client, fără colet nou? Cheamă curierul</button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-slate-600">Niciun curier chemat încă. GLS va veni la adresa clientului și va aduce coletul la depozit.</p>
+                <Button onClick={openModal} className="w-full"><Truck className="h-4 w-4" /> Cheamă curierul la client</Button>
+              </>
+            )}
             {!manual ? (
               <button onClick={() => setManual(true)} className="w-full text-center text-xs text-slate-500 hover:text-slate-800">Ai deja un AWB creat în MyGLS? Atașează-l</button>
             ) : (
@@ -272,6 +335,92 @@ function CourierCard({ item, onChanged }) {
           </div>
         )}
       </Modal>
+
+      <Modal open={xmodal} onClose={() => setXmodal(false)} title="AWB colet la schimb (GLS Exchange)" wide
+        footer={<><Button variant="outline" onClick={() => setXmodal(false)}>Renunță</Button>
+          <Button onClick={createExchange} loading={busy === "xcreate"} disabled={!xform}><Repeat className="h-4 w-4" /> Emite AWB și printează eticheta</Button></>}>
+        {!xform ? <PageLoader /> : <ExchangeForm f={xform} setF={setXform} />}
+      </Modal>
     </Card>
+  );
+}
+
+function ExchangeForm({ f, setF }) {
+  const [q, setQ] = useState("");
+  const [all, setAll] = useState(null);
+  const setC = (k, v) => setF((x) => ({ ...x, client: { ...x.client, [k]: v } }));
+  const setItems = (items) => setF((x) => ({ ...x, items }));
+  useEffect(() => { if (q.trim().length >= 2 && !all) api("/stock/items?view=active").then(setAll).catch(() => setAll([])); }, [q]); // eslint-disable-line
+  const norm = (t) => (t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const found = q.trim().length >= 2 && all
+    ? all.filter((r) => norm(`${r.product_title} ${r.variant_title} ${r.sku}`).includes(norm(q.trim())) && !f.items.some((i) => i.variant_id === r.variant_id)).slice(0, 8)
+    : [];
+  return (
+    <div className="space-y-5">
+      <div className="rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-900">
+        Coletul pleacă din <strong>depozitul nostru</strong> cu curierul GLS de zi cu zi. La livrare, curierul ia de la client <strong>produsul defect</strong> și îl aduce înapoi la noi.
+      </div>
+      <div>
+        <div className="mb-2 text-sm font-semibold">Adresa clientului (livrare + ridicare produs defect)</div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Nume client"><Input value={f.client.name} onChange={(e) => { setC("name", e.target.value); setC("contact_name", e.target.value); }} /></Field>
+          <Field label="Telefon"><Input value={f.client.contact_phone} onChange={(e) => setC("contact_phone", e.target.value)} /></Field>
+          <Field label="Stradă și număr" className="sm:col-span-2"><Input value={f.client.street} onChange={(e) => setC("street", e.target.value)} /></Field>
+          <Field label="Bloc / scară / ap. (opțional)"><Input value={f.client.house_number} onChange={(e) => setC("house_number", e.target.value)} /></Field>
+          <Field label="Localitate"><Input value={f.client.city} onChange={(e) => setC("city", e.target.value)} /></Field>
+          <Field label="Județ"><Input value={f.client.county} onChange={(e) => setC("county", e.target.value)} /></Field>
+          <Field label="Cod poștal"><Input value={f.client.zip_code} onChange={(e) => setC("zip_code", e.target.value)} /></Field>
+          <Field label="Email (pentru notificare)" className="sm:col-span-2"><Input value={f.client.contact_email} onChange={(e) => setC("contact_email", e.target.value)} /></Field>
+        </div>
+      </div>
+      <div>
+        <div className="mb-1 text-sm font-semibold">Produsul trimis la schimb</div>
+        <div className="mb-2 text-xs text-slate-500">Implicit, produsele din cerere. Dacă schimbi doar o componentă (ex. doar aparatul de sudură din pachet), șterge pachetul și caută produsul.</div>
+        <div className="space-y-2">
+          {f.items.length === 0 && <div className="rounded-lg border border-dashed border-slate-300 px-3 py-3 text-center text-sm text-slate-400">Niciun produs ales</div>}
+          {f.items.map((it, i) => (
+            <div key={it.variant_id} className="flex items-center gap-3 rounded-lg ring-1 ring-slate-200 px-3 py-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-slate-50">{it.image ? <img src={it.image} alt="" className="h-full w-full object-contain" /> : <Package className="h-4 w-4 text-slate-400" />}</div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium">{it.title || it.variant_id}</div>
+                {it.sku && <div className="font-mono text-[11px] text-slate-400">SKU {it.sku}</div>}
+              </div>
+              <Input type="number" min={1} className="w-20 text-right" value={it.qty} onChange={(e) => setItems(f.items.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+              <button onClick={() => setItems(f.items.filter((_, j) => j !== i))} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><X className="h-4 w-4" /></button>
+            </div>
+          ))}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Input className="pl-9" placeholder="Caută alt produs (nume sau SKU)…" value={q} onChange={(e) => setQ(e.target.value)} />
+            {found.length > 0 && (
+              <div className="absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {found.map((r) => (
+                  <button key={r.variant_id} onClick={() => { setItems([...f.items, { variant_id: r.variant_id, qty: 1, title: [r.product_title, r.variant_title].filter(Boolean).join(" — "), sku: r.sku, image: r.image }]); setQ(""); }}
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50">
+                    <span className="truncate">{[r.product_title, r.variant_title].filter(Boolean).join(" — ")}</span>
+                    <span className="shrink-0 text-xs text-slate-400">în depozit {r.on_hand}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Data expedierii din depozit"><Input type="date" value={f.ship_date} onChange={(e) => setF({ ...f, ship_date: e.target.value })} /></Field>
+        <Field label="Număr colete"><Input type="number" min={1} value={f.parcel_count} onChange={(e) => setF({ ...f, parcel_count: Number(e.target.value) || 1 })} /></Field>
+        <Field label="Conținut (pe etichetă)"><Input value={f.content} maxLength={30} onChange={(e) => setF({ ...f, content: e.target.value })} /></Field>
+      </div>
+      <div className="space-y-2">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" className="accent-brand" checked={f.deduct_stock} onChange={(e) => setF({ ...f, deduct_stock: e.target.checked })} />
+          Scade din stoc produsul trimis (revine automat în stoc dacă anulezi AWB-ul)
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" className="accent-brand" checked={f.notify_customer} onChange={(e) => setF({ ...f, notify_customer: e.target.checked })} />
+          Trimite email clientului: produsul nou e pe drum, să pregătească produsul defect pentru curier
+        </label>
+      </div>
+    </div>
   );
 }

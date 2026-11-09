@@ -207,6 +207,37 @@ async def create_pickup(*, pickup: dict, delivery: dict, reference: str, parcel_
     return {"awb": str(awb), "parcel_id": str(info.get("ParcelId") or ""), "label_pdf": _pdf(data.get("Labels"))}
 
 
+async def create_exchange(*, sender: dict, client: dict, reference: str, parcel_count: int = 1,
+                          content: str = "Colet schimb", ship_date: Optional[datetime] = None) -> dict:
+    """ExchangeService (XS): coletul nou pleacă din depozitul nostru, iar curierul GLS ridică
+    în același timp de la client coletul cu produsul defect și îl aduce înapoi la noi."""
+    parcel = {
+        "ClientNumber": int(config.GLS_CLIENT_NUMBER),
+        "ClientReference": reference[:30],
+        "CODAmount": 0,
+        "CODReference": "",
+        "Content": content[:30],
+        "Count": max(1, int(parcel_count)),
+        "DeliveryAddress": _addr(client),
+        "PickupAddress": _addr(sender),
+        "PickupDate": _ms(ship_date or datetime.now(timezone.utc)),
+        "ServiceList": [{"Code": "XS"}],
+    }
+    data = await _post("PrintLabels", {
+        "ParcelList": [parcel], "TypeOfPrinter": "A4_2x2", "PrintPosition": 1, "ShowPrintDialog": False,
+    })
+    err = _first_error(data, "PrintLabelsErrorList")
+    if err:
+        raise GlsError(err)
+    infos = data.get("PrintLabelsInfoList") or [{}]
+    info = infos[0] or {}
+    awb = info.get("ParcelNumber") or info.get("ParcelNumberStr")
+    if not awb:
+        raise GlsError("GLS nu a întors număr de AWB")
+    return {"awb": str(awb), "parcel_id": str(info.get("ParcelId") or ""), "label_pdf": _pdf(data.get("Labels")),
+            "all_awbs": [str(i.get("ParcelNumber")) for i in infos if i and i.get("ParcelNumber")]}
+
+
 async def tracking(awb: str) -> dict:
     data = await _post("GetParcelStatuses", {"ParcelNumber": str(awb), "ReturnPOD": False, "LanguageIsoCode": "RO"})
     err = _first_error(data, "GetParcelStatusErrors")

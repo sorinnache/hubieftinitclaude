@@ -36,6 +36,22 @@ class PickupBody(BaseModel):
     notify_customer: bool = True
 
 
+class ExchangeItem(BaseModel):
+    variant_id: str
+    qty: int = 1
+    title: str = ""
+
+
+class ExchangeBody(BaseModel):
+    client: Address
+    parcel_count: int = 1
+    ship_date: Optional[str] = None  # YYYY-MM-DD — ziua în care pleacă coletul din depozit
+    content: str = "Colet schimb"
+    items: list[ExchangeItem] = []
+    deduct_stock: bool = True
+    notify_customer: bool = True
+
+
 class ManualAwbBody(BaseModel):
     awb: str
 
@@ -143,6 +159,74 @@ async def create_pickup(return_id: str, body: PickupBody, request: Request, user
     return doc
 
 
+@router.post("/returns/{return_id}/exchange")
+async def create_exchange(return_id: str, body: ExchangeBody, request: Request, user: dict = Depends(get_current_user)):
+    """Schimb: AWB GLS cu ExchangeService (XS) — pleacă produsul nou de la noi, curierul ridică produsul defect."""
+    from . import stock
+    db = get_db()
+    ret = await db.returns.find_one({"id": return_id}, {"_id": 0})
+    if not ret:
+        raise HTTPException(404, "Retur inexistent")
+    if (a := await _active(return_id)) and a.get("awb"):
+        raise HTTPException(400, f"Returul are deja AWB activ ({a['awb']}). Anulează-l întâi.")
+    wh = await get_warehouse()
+    if not wh.get("street") or not wh.get("city"):
+        raise HTTPException(400, "Setează adresa depozitului în Setări → Curier GLS")
+    c = body.client.model_dump()
+    missing = [lbl for f, lbl in (("street", "strada"), ("city", "localitatea"), ("zip_code", "codul poștal"),
+                                  ("contact_phone", "telefonul")) if not (c.get(f) or "").strip()]
+    if missing:
+        raise HTTPException(400, "Completează: " + ", ".join(missing))
+    items = [i for i in body.items if i.variant_id and i.qty > 0]
+    if body.deduct_stock and not items:
+        raise HTTPException(400, "Alege produsul trimis la schimb (sau debifează scăderea din stoc)")
+    sdate = None
+    if body.ship_date:
+        try:
+            sdate = datetime.fromisoformat(body.ship_date).replace(hour=9, tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, "Dată expediere invalidă")
+    try:
+        res = await gls.create_exchange(sender=wh, client=c, reference=ret["return_number"],
+                                        parcel_count=body.parcel_count, content=body.content or "Colet schimb",
+                                        ship_date=sdate)
+    except gls.GlsError as e:
+        await audit.log(resource_type="return", resource_id=return_id, action="exchange_failed", actor=user,
+                        details={"error": str(e)}, ip=audit.client_ip(request))
+        raise HTTPException(400, f"GLS: {e}")
+    sid = new_id()
+    label_path = None
+    if res.get("label_pdf"):
+        label_path = storage.save_bytes(f"label-{sid}", res["label_pdf"], "application/pdf", "eticheta.pdf")["path"]
+    moved = []
+    if body.deduct_stock:
+        for it in items:
+            for m in await stock.move(str(it.variant_id), -int(it.qty), "schimb", ref=f"{ret['return_number']} · AWB {res['awb']}",
+                                      note="Produs trimis la schimb", actor=user["name"], ref_kind="exchange", ref_id=sid):
+                moved.append({"variant_id": m["variant_id"], "delta": m["delta"]})
+    doc = {
+        "id": sid, "ref_type": "return", "ref_id": return_id, "ref_number": ret["return_number"], "kind": "exchange",
+        "courier": "gls", "awb": res["awb"], "parcel_id": res["parcel_id"], "all_awbs": res.get("all_awbs") or [],
+        "manual": False, "status": "created", "status_code": None, "status_description": "AWB schimb creat — nepreluat încă de GLS",
+        "pickup_address": wh, "delivery_address": c, "parcel_count": body.parcel_count,
+        "ship_date": (sdate or datetime.now(timezone.utc)).date().isoformat(), "label_path": label_path, "tracking": [],
+        "items": [i.model_dump() for i in items], "stock_moved": moved,
+        "created_at": now_iso(), "created_by": user["name"],
+    }
+    await db.shipments.insert_one(dict(doc))
+    await db.returns.update_one({"id": return_id}, {"$set": {"awb": res["awb"], "courier": "gls", "updated_at": now_iso()}})
+    await audit.log(resource_type="return", resource_id=return_id, action="exchange_created", actor=user,
+                    details={"awb": res["awb"], "address": c, "items": [f"{i.qty} × {i.title or i.variant_id}" for i in items],
+                             "stock": bool(moved)}, ip=audit.client_ip(request))
+    if body.notify_customer and ret.get("email"):
+        subj, html = emails.exchange_sent(ret["return_number"], ret.get("customer_name", ""), res["awb"])
+        if await emails.send(ret["email"], subj, html):
+            await audit.log(resource_type="return", resource_id=return_id, action="email_sent",
+                            details={"to": ret["email"], "subject": subj})
+    doc.pop("label_path", None)
+    return doc
+
+
 @router.post("/returns/{return_id}/manual-awb")
 async def manual_awb(return_id: str, body: ManualAwbBody, request: Request, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -232,6 +316,12 @@ async def cancel(sid: str, request: Request, user: dict = Depends(get_current_us
             raise HTTPException(400, f"GLS: {e}")
     await db.shipments.update_one({"id": sid}, {"$set": {"status": "cancelled", "status_description": "Anulat",
                                                          "cancelled_at": now_iso(), "cancelled_by": user["name"]}})
+    if s.get("kind") == "exchange" and s.get("stock_moved"):
+        from . import stock  # produsul nu a mai plecat — revine în stoc
+        for m in s["stock_moved"]:
+            await stock.move(m["variant_id"], -int(m["delta"]), "schimb", ref=f"{s.get('ref_number')} · AWB {s['awb']} anulat",
+                             note="AWB schimb anulat — produsul revine în stoc", actor=user["name"], ref_kind="exchange",
+                             ref_id=sid, expand_bundle=False)
     await db[{"return": "returns", "service": "service_requests"}[s["ref_type"]]].update_one(
         {"id": s["ref_id"]}, {"$set": {"awb": None, "updated_at": now_iso()}})
     await audit.log(resource_type=s["ref_type"], resource_id=s["ref_id"], action="pickup_cancelled", actor=user,

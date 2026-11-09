@@ -326,6 +326,10 @@ export function describe(h) {
       return { title: `Fișier adăugat: ${d.filename || ""}` };
     case "pickup_created":
       return { title: `Curier GLS chemat la client · AWB ${d.awb}`, body: `Ridicare de la ${d.pickup_date || "—"} · ${fv(d.address && { s: d.address.street, c: d.address.city, z: d.address.zip_code })}` };
+    case "exchange_created":
+      return { title: `AWB colet la schimb emis · ${d.awb}`, body: [(d.items || []).join(", "), d.stock ? "scăzut din stoc" : null, fv(d.address && { s: d.address.street, c: d.address.city })].filter(Boolean).join(" · ") };
+    case "exchange_failed":
+      return { title: "Emiterea AWB-ului de schimb a eșuat", body: d.error, tone: "error" };
     case "pickup_failed":
       return { title: "Chemarea curierului a eșuat", body: d.error, tone: "error" };
     case "pickup_cancelled":
