@@ -73,13 +73,15 @@ cu serviciul de <strong>schimb</strong>: când curierul îți livrează coletul 
 <p>Poți urmări coletul aici: <a href="https://gls-group.com/RO/ro/urmarire-colet/?match={awb}">urmărire AWB {awb}</a></p>"""))
 
 
-def pickup_scheduled(number: str, name: str, awb: str, pickup_date: str) -> tuple[str, str]:
+def pickup_scheduled(number: str, name: str, awb: str, pickup_date: str, kind: str = "return") -> tuple[str, str]:
     n = html.escape(name or "")
-    return (f"Retur {number} — curierul GLS vine să ridice coletul", _layout("Am chemat curierul pentru returul tău", f"""
+    svc = kind == "service"
+    return (f"{'Service' if svc else 'Retur'} {number} — curierul GLS vine să ridice coletul",
+            _layout("Am chemat curierul pentru produsul tău" if svc else "Am chemat curierul pentru returul tău", f"""
 <p>Salut {n},</p>
-<p>Am aprobat cererea de retur <strong>{number}</strong>. Curierul <strong>GLS</strong> va veni să ridice coletul de la adresa ta
+<p>Am {'preluat cererea de service' if svc else 'aprobat cererea de retur'} <strong>{number}</strong>. Curierul <strong>GLS</strong> va veni să ridice coletul de la adresa ta
 începând cu data de <strong>{html.escape(pickup_date)}</strong>.</p>
-{_box("AWB retur GLS", awb)}
+{_box("AWB service GLS" if svc else "AWB retur GLS", awb)}
 <p><strong>Te rugăm să ai coletul pregătit:</strong></p>
 <ul><li>produsul ambalat corespunzător, cu toate accesoriile primite;</li>
 <li>nu este nevoie să printezi nimic — curierul aduce eticheta.</li></ul>

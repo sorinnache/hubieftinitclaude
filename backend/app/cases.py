@@ -308,6 +308,8 @@ def build_router(kind: str) -> APIRouter:
             doc["shipments"] = await db.shipments.find({"ref_type": "return", "ref_id": item_id},
                                                        {"_id": 0, "label_path": 0}).sort("created_at", -1).to_list(50)
         else:
+            doc["shipments"] = await db.shipments.find({"ref_type": "service", "ref_id": item_id},
+                                                       {"_id": 0, "label_path": 0}).sort("created_at", -1).to_list(50)
             if doc.get("problem_type_id"):
                 doc["problem_type"] = await db.service_problem_types.find_one({"id": doc["problem_type_id"]}, {"_id": 0})
         return doc

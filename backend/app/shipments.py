@@ -227,6 +227,88 @@ async def create_exchange(return_id: str, body: ExchangeBody, request: Request, 
     return doc
 
 
+@router.get("/service/{service_id}/pickup-address")
+async def service_pickup_address(service_id: str, _: dict = Depends(get_current_user)):
+    """Adresa de ridicare completată de client în formularul de service (cu rezervă: adresa din comandă)."""
+    svc = await get_db().service_requests.find_one({"id": service_id}, {"_id": 0})
+    if not svc:
+        raise HTTPException(404, "Cerere inexistentă")
+    p = svc.get("pickup") or {}
+    ship = ((svc.get("shopify_order") or {}).get("shipping_address")) or {}
+    name = p.get("contact_name") or svc.get("customer_name") or ship.get("name") or ""
+    return {
+        "name": name, "contact_name": name,
+        "contact_phone": p.get("contact_phone") or svc.get("phone") or ship.get("phone") or "",
+        "contact_email": svc.get("email") or "",
+        "street": p.get("address1") or " ".join(x for x in [(ship.get("address1") or "").strip(), (ship.get("address2") or "").strip()] if x),
+        "house_number": "",
+        "city": p.get("city") or ship.get("city") or "",
+        "zip_code": p.get("zip") or ship.get("zip") or "",
+        "county": p.get("county") or ship.get("province") or "",
+        "country": "RO",
+    }
+
+
+@router.post("/service/{service_id}/pickup")
+async def create_service_pickup(service_id: str, body: PickupBody, request: Request, user: dict = Depends(get_current_user)):
+    """Cheamă curierul GLS să ridice produsul defect de la client și să-l aducă la depozit (service)."""
+    db = get_db()
+    svc = await db.service_requests.find_one({"id": service_id}, {"_id": 0})
+    if not svc:
+        raise HTTPException(404, "Cerere inexistentă")
+    a = await db.shipments.find_one({"ref_type": "service", "ref_id": service_id, "status": {"$nin": ["cancelled"]}}, {"_id": 0})
+    if a and a.get("awb"):
+        raise HTTPException(400, f"Cererea are deja AWB de ridicare activ ({a['awb']}). Anulează-l întâi.")
+    wh = await get_warehouse()
+    if not wh.get("street") or not wh.get("city"):
+        raise HTTPException(400, "Setează adresa depozitului în Setări → Curier GLS")
+    p = body.pickup.model_dump()
+    missing = [lbl for f, lbl in (("street", "strada"), ("city", "localitatea"), ("zip_code", "codul poștal"),
+                                  ("contact_phone", "telefonul")) if not (p.get(f) or "").strip()]
+    if missing:
+        raise HTTPException(400, "Completează: " + ", ".join(missing))
+    pdate = None
+    if body.pickup_date:
+        try:
+            pdate = datetime.fromisoformat(body.pickup_date).replace(hour=9, tzinfo=timezone.utc)
+        except ValueError:
+            raise HTTPException(400, "Dată ridicare invalidă")
+    pdate = pdate or gls.next_business_day()
+    number = svc["service_number"]
+    try:
+        res = await gls.create_pickup(pickup=p, delivery=wh, reference=number,
+                                      parcel_count=body.parcel_count, pickup_date=pdate)
+    except gls.GlsError as e:
+        await audit.log(resource_type="service", resource_id=service_id, action="pickup_failed", actor=user,
+                        details={"error": str(e)}, ip=audit.client_ip(request))
+        raise HTTPException(400, f"GLS: {e}")
+    sid = new_id()
+    label_path = None
+    if res.get("label_pdf"):
+        label_path = storage.save_bytes(f"label-{sid}", res["label_pdf"], "application/pdf", "eticheta.pdf")["path"]
+    doc = {
+        "id": sid, "ref_type": "service", "ref_id": service_id, "ref_number": number,
+        "courier": "gls", "awb": res["awb"], "parcel_id": res["parcel_id"], "manual": False,
+        "status": "created", "status_code": None, "status_description": gls.STATUS_LABELS["created"],
+        "pickup_address": p, "delivery_address": wh, "parcel_count": body.parcel_count,
+        "pickup_date": pdate.date().isoformat(), "label_path": label_path, "tracking": [],
+        "created_at": now_iso(), "created_by": user["name"],
+    }
+    await db.shipments.insert_one(dict(doc))
+    await db.service_requests.update_one({"id": service_id}, {"$set": {"awb_inbound": res["awb"], "updated_at": now_iso()}})
+    await audit.log(resource_type="service", resource_id=service_id, action="pickup_created", actor=user,
+                    details={"awb": res["awb"], "pickup_date": doc["pickup_date"], "address": p,
+                             "parcel_count": body.parcel_count}, ip=audit.client_ip(request))
+    if body.notify_customer and svc.get("email"):
+        subj, html = emails.pickup_scheduled(number, svc.get("customer_name", ""), res["awb"],
+                                             pdate.strftime("%d.%m.%Y"), kind="service")
+        if await emails.send(svc["email"], subj, html):
+            await audit.log(resource_type="service", resource_id=service_id, action="email_sent",
+                            details={"to": svc["email"], "subject": subj})
+    doc.pop("label_path", None)
+    return doc
+
+
 @router.post("/returns/{return_id}/manual-awb")
 async def manual_awb(return_id: str, body: ManualAwbBody, request: Request, user: dict = Depends(get_current_user)):
     db = get_db()
@@ -322,8 +404,10 @@ async def cancel(sid: str, request: Request, user: dict = Depends(get_current_us
             await stock.move(m["variant_id"], -int(m["delta"]), "schimb", ref=f"{s.get('ref_number')} · AWB {s['awb']} anulat",
                              note="AWB schimb anulat — produsul revine în stoc", actor=user["name"], ref_kind="exchange",
                              ref_id=sid, expand_bundle=False)
-    await db[{"return": "returns", "service": "service_requests"}[s["ref_type"]]].update_one(
-        {"id": s["ref_id"]}, {"$set": {"awb": None, "updated_at": now_iso()}})
+    if s["ref_type"] == "service":
+        await db.service_requests.update_one({"id": s["ref_id"]}, {"$set": {"awb_inbound": "", "updated_at": now_iso()}})
+    else:
+        await db.returns.update_one({"id": s["ref_id"]}, {"$set": {"awb": None, "updated_at": now_iso()}})
     await audit.log(resource_type=s["ref_type"], resource_id=s["ref_id"], action="pickup_cancelled", actor=user,
                     details={"awb": s["awb"], "manual": bool(s.get("manual"))}, ip=audit.client_ip(request))
     return {"ok": True}
