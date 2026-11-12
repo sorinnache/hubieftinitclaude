@@ -28,6 +28,7 @@ const OTHER = {
   "stock.surprise": "Produs surpriză modificat",
   "stock.refused": "Colet refuzat recepționat (scanat)",
   "stock.refused_undo": "Recepție colet refuzat anulată",
+  "stock.case_scanned": "Colet retur/schimb/service scanat la recepție (fără stoc)",
   "stock.snapshot": "Situație stoc salvată (istoric)",
   "stock.inventory_abandoned": "Inventar abandonat",
   "stock.receipt": "Intrare marfă",

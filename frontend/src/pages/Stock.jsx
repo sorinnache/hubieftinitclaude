@@ -1427,7 +1427,7 @@ function RefusedTab() {
   const load = () => api("/stock/refused?days=30").then(setD).catch((e) => toast.error(e.message));
   useEffect(() => { load(); }, []); // eslint-disable-line
   const undo = async (r) => {
-    if (!window.confirm(`Anulezi recepția pentru ${r.order_name}? Produsele (${r.units} buc) se scad înapoi din stoc.`)) return;
+    if (!window.confirm(r.kind ? `Anulezi scanarea pentru ${r.case_number}? (nu afectează stocul)` : `Anulezi recepția pentru ${r.order_name}? Produsele (${r.units} buc) se scad înapoi din stoc.`)) return;
     try { await api(`/stock/refused/${r.id}/undo`, { method: "POST" }); toast.success("Recepție anulată"); load(); }
     catch (e) { toast.error(e.message); }
   };
@@ -1457,10 +1457,10 @@ function RefusedTab() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {d.items.map((r) => (
-                  <tr key={r.id} className={cx(r.undone && "opacity-50")}>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-slate-500">{fmtDateTime(r.created_at)}</td>
-                    <td className="px-4 py-2.5"><div className="font-semibold">{r.order_name}</div><div className="font-mono text-xs text-slate-500">{r.awb}</div>{r.customer && <div className="text-xs text-slate-400">{r.customer}{r.city ? `, ${r.city}` : ""}</div>}</td>
-                    <td className="px-4 py-2.5">{r.lines.map((l) => <div key={l.movement_id}><strong className="text-emerald-700">+{l.qty}</strong> {l.title}</div>)}{r.undone && <div className="text-xs font-medium text-red-600">anulată de {r.undone_by}</div>}</td>
+                  <tr key={r.id} className={cx(r.undone && "opacity-50", r.kind && "bg-violet-50/70")}>
+                    <td className={cx("whitespace-nowrap px-4 py-2.5 text-slate-500", r.kind && "border-l-4 border-violet-500")}>{fmtDateTime(r.created_at)}</td>
+                    <td className="px-4 py-2.5">{r.kind && <a href={`/${r.case_type === "service" ? "service" : "retururi"}/${r.case_id}`} className="mb-1 inline-flex items-center gap-1.5 hover:underline"><span className="rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">{{ retur: "Retur", schimb: "Schimb", service: "Service" }[r.kind]}</span><span className="font-mono text-xs font-semibold text-violet-800">{r.case_number}</span></a>}<div className="font-semibold">{r.order_name}</div><div className="font-mono text-xs text-slate-500">{r.awb}</div>{r.customer && <div className="text-xs text-slate-400">{r.customer}{r.city ? `, ${r.city}` : ""}</div>}</td>
+                    <td className="px-4 py-2.5">{r.kind && <><div className="text-xs font-semibold text-violet-700">Nu se adaugă în stoc — doar evidență</div>{(r.case_items || []).map((l, i) => <div key={i} className="text-slate-600">{l.qty} × {l.title}</div>)}</>}{r.lines.map((l) => <div key={l.movement_id}><strong className="text-emerald-700">+{l.qty}</strong> {l.title}</div>)}{r.undone && <div className="text-xs font-medium text-red-600">anulată de {r.undone_by}</div>}</td>
                     <td className="px-4 py-2.5 text-slate-500">{r.by}</td>
                     <td className="px-2">{isAdmin && !r.undone && <button title="Anulează (scanat din greșeală)" onClick={() => undo(r)} className="rounded p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"><Undo2 className="h-4 w-4" /></button>}</td>
                   </tr>
@@ -1486,7 +1486,7 @@ function refusedDays(items) {
   }
   const map = Object.fromEntries(days.map((x) => [x.key, x]));
   for (const r of items) {
-    if (r.undone) continue; // scanările anulate nu se numără
+    if (r.undone || r.kind) continue; // scanările anulate și coletele retur/schimb/service nu se numără
     const x = map[dayKey(r.created_at)];
     if (x) { x.parcels += 1; x.units += r.units || 0; }
   }

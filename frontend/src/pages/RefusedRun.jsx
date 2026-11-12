@@ -19,6 +19,8 @@ function beep(ok) {
 }
 const hm = (iso) => new Date(iso).toLocaleTimeString("ro-RO", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Bucharest" });
 
+const KIND = { retur: "Retur", schimb: "Schimb", service: "Service" };
+
 export default function RefusedRun() {
   const nav = useNavigate();
   const [code, setCode] = useState("");
@@ -57,7 +59,7 @@ export default function RefusedRun() {
         <button onClick={() => nav("/stocuri?tab=refuzate")} className="-ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
         <div className="text-center">
           <div className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Recepție colete refuzate</div>
-          <div className="text-sm font-semibold">Azi: {stats.today_parcels} colete · {stats.today_units} produse readăugate în stoc</div>
+          <div className="text-sm font-semibold">Azi: {stats.today_parcels} colete · {stats.today_units} produse readăugate în stoc{stats.today_cases > 0 && ` · ${stats.today_cases} retur/schimb/service`}</div>
         </div>
         <div className="w-10" />
       </div>
@@ -68,10 +70,22 @@ export default function RefusedRun() {
           <input ref={ref} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" autoFocus inputMode="none"
             placeholder={busy ? "Se procesează…" : "Așteaptă scanarea…"}
             className="h-16 w-full rounded-xl border-0 px-4 font-mono text-2xl tracking-wider ring-2 ring-inset ring-brand/50 outline-none focus:ring-brand" />
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Keyboard className="h-3.5 w-3.5" /> Poți scrie și manual numărul AWB și apăsa Enter.</div>
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-slate-400"><Keyboard className="h-3.5 w-3.5" /> Poți scrie și manual numărul AWB și apăsa Enter. Pentru colete de retur / schimb / service fără AWB cunoscut, scrie numărul cererii (ex. RET-2026-00091).</div>
         </form>
 
-        {last && (last.ok ? (
+        {last && (last.ok && last.data.kind ? (
+          <div key={last.data.id} className="mt-5 rounded-2xl bg-violet-50 p-5 ring-2 ring-violet-400">
+            <div className="flex flex-wrap items-center gap-2 text-lg font-bold text-violet-900">
+              <span className="rounded-md bg-violet-600 px-2.5 py-1 text-sm font-black uppercase tracking-wider text-white">{KIND[last.data.kind]}</span>
+              {last.data.case_number} — NU se adaugă în stoc
+            </div>
+            <div className="mt-1 text-sm text-violet-800">Comanda {last.data.order_name} · AWB / cod {last.data.awb}{last.data.customer && ` · ${last.data.customer}`}{last.data.city && `, ${last.data.city}`}</div>
+            <div className="mt-3 space-y-1.5">
+              {(last.data.case_items || []).map((l, i) => <div key={i} className="rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-violet-200"><strong>{l.qty} ×</strong> {l.title}</div>)}
+            </div>
+            <div className="mt-3 text-sm font-medium text-violet-900">Scanarea a fost notată în istoricul cererii. Pune coletul deoparte pentru verificare.</div>
+          </div>
+        ) : last.ok ? (
           <div key={last.data.id} className="mt-5 rounded-2xl bg-emerald-50 p-5 ring-2 ring-emerald-300">
             <div className="flex items-center gap-2 text-lg font-bold text-emerald-800"><CheckCircle2 className="h-6 w-6" /> {last.data.order_name} — readăugat în stoc</div>
             <div className="mt-0.5 text-sm text-emerald-700">AWB {last.data.awb}{last.data.customer && ` · ${last.data.customer}`}{last.data.city && `, ${last.data.city}`}</div>
@@ -99,9 +113,10 @@ export default function RefusedRun() {
           {list.length === 0 ? <div className="text-sm text-slate-400">Niciun colet scanat azi.</div> : list.map((r) => (
             <div key={r.id} className={cx("mb-1.5 flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-200", r.undone && "opacity-40 line-through")}>
               <span className="w-12 text-xs tabular text-slate-400">{hm(r.created_at)}</span>
-              <span className="font-semibold">{r.order_name}</span>
+              {r.kind && <span className="rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">{KIND[r.kind]}</span>}
+              <span className="font-semibold">{r.kind ? r.case_number : r.order_name}</span>
               <span className="font-mono text-xs text-slate-500">{r.awb}</span>
-              <span className="min-w-0 flex-1 truncate text-slate-600">{r.lines.map((l) => `+${l.qty} ${l.title}`).join(", ")}</span>
+              <span className="min-w-0 flex-1 truncate text-slate-600">{r.kind ? `fără stoc · ${(r.case_items || []).map((l) => `${l.qty} × ${l.title}`).join(", ")}` : r.lines.map((l) => `+${l.qty} ${l.title}`).join(", ")}</span>
               <span className="text-xs text-slate-400">{r.by}</span>
             </div>
           ))}

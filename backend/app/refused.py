@@ -52,8 +52,6 @@ async def _find_order(code: str) -> tuple[Optional[dict], Optional[str]]:
         o = await db.profit_orders.find_one({"order_id": p["order_id"]}, {"_id": 0})
         if o:
             return o, p["awb"]
-    if await db.shipments.find_one({"awb": {"$in": cands}}, {"_id": 1}):
-        return None, "retur"
     # nu e încă în hub: căutăm direct în Shopify după numărul AWB (căutarea Shopify include tracking-ul)
     for c in [x for x in cands if x.isdigit() and 10 <= len(x) <= 11][:4]:
         try:
@@ -79,6 +77,80 @@ async def _shipped(order_id: str) -> dict[str, int]:
     return {k: v for k, v in out.items() if v > 0}
 
 
+CASE_LABEL = {"retur": "Retur", "schimb": "Schimb", "service": "Service"}
+
+
+async def _find_case(code: str) -> Optional[dict]:
+    """Coletul scanat ține de o cerere de retur / schimb / service? (aceste produse NU revin în stoc)
+    Căutăm: numărul cererii tastat (RET-… / SVC-…), AWB-urile chemate din hub, AWB-urile notate manual."""
+    db = get_db()
+    c = re.sub(r"\s+", "", code or "").upper()
+    for coll, num, typ in (("returns", "return_number", "return"), ("service_requests", "service_number", "service")):
+        if re.match(r"^(RET|SVC)-", c):
+            d = await db[coll].find_one({num: c, "deleted": {"$ne": True}}, {"_id": 0, "shopify_order": 0})
+            if d:
+                return {"type": typ, "doc": d, "awb": c, "shipment": None}
+    cands = _variants_of_code(code)
+    sh = await db.shipments.find_one({"awb": {"$in": cands}}, {"_id": 0, "tracking": 0}) or \
+        await db.shipments.find_one({"all_awbs": {"$in": cands}}, {"_id": 0, "tracking": 0})
+    if sh:
+        coll = "returns" if sh["ref_type"] == "return" else "service_requests"
+        d = await db[coll].find_one({"id": sh["ref_id"]}, {"_id": 0, "shopify_order": 0})
+        if d:
+            return {"type": sh["ref_type"], "doc": d, "awb": sh["awb"], "shipment": sh}
+    d = await db.returns.find_one({"awb": {"$in": cands}, "deleted": {"$ne": True}}, {"_id": 0, "shopify_order": 0})
+    if d:
+        return {"type": "return", "doc": d, "awb": d["awb"], "shipment": None}
+    for f in ("awb_inbound", "awb_outbound"):
+        d = await db.service_requests.find_one({f: {"$in": cands}, "deleted": {"$ne": True}}, {"_id": 0, "shopify_order": 0})
+        if d:
+            return {"type": "service", "doc": d, "awb": d[f], "shipment": None}
+    return None
+
+
+async def _case_of_order(order: dict) -> Optional[dict]:
+    """Comanda are o cerere de retur/service deschisă? Atunci coletul (chiar cu AWB-ul vechi pe cutie)
+    e un retur de la client, nu un colet refuzat — nu se readaugă în stoc."""
+    db = get_db()
+    n = (order.get("name") or "").lstrip("#")
+    if not n:
+        return None
+    best = None
+    for coll, typ in (("returns", "return"), ("service_requests", "service")):
+        async for d in db[coll].find({"order_number": {"$in": [n, "#" + n]}, "deleted": {"$ne": True}},
+                                     {"_id": 0, "shopify_order": 0}).sort("created_at", -1).limit(1):
+            if not best or d.get("created_at", "") > best["doc"].get("created_at", ""):
+                best = {"type": typ, "doc": d, "awb": None, "shipment": None}
+    return best
+
+
+async def _scan_case(case: dict, code: str, awb: str, request: Request, user: dict) -> dict:
+    db = get_db()
+    d, typ = case["doc"], case["type"]
+    number = d.get("return_number") or d.get("service_number")
+    kind = "service" if typ == "service" else (
+        "schimb" if d.get("return_type") == "exchange" or (case.get("shipment") or {}).get("kind") == "exchange" else "retur")
+    prev = await db.refused_scans.find_one({"case_id": d["id"], "awb": awb, "undone": {"$ne": True}}, {"_id": 0})
+    if prev:
+        raise HTTPException(409, f"Coletul pentru {number} a fost deja scanat pe "
+                                 f"{datetime.fromisoformat(prev['created_at']).astimezone(TZ).strftime('%d.%m.%Y %H:%M')} "
+                                 f"de {prev['by']}.")
+    ship = d.get("pickup") or {}
+    sid = new_id()
+    doc = {"id": sid, "code": code, "awb": awb, "kind": kind, "case_type": typ, "case_id": d["id"], "case_number": number,
+           "order_id": None, "order_name": ("#" + str(d["order_number"]).lstrip("#")) if d.get("order_number") else number,
+           "customer": d.get("customer_name"), "city": ship.get("city"),
+           "case_items": [{"qty": int(i.get("quantity") or 1), "title": i.get("title") or "", "image": i.get("image")}
+                          for i in d.get("items") or []],
+           "lines": [], "units": 0, "by": user["name"], "created_at": now_iso(), "source": "cerere"}
+    await db.refused_scans.insert_one(dict(doc))
+    await audit.log(resource_type=typ, resource_id=d["id"], action="parcel_scanned", actor=user,
+                    details={"awb": awb, "code": code, "kind": kind}, ip=audit.client_ip(request))
+    await audit.log(resource_type="stock", resource_id=sid, action="stock.case_scanned", actor=user,
+                    details={"case": number, "awb": awb, "kind": kind}, ip=audit.client_ip(request))
+    return doc
+
+
 class ScanBody(BaseModel):
     code: str
 
@@ -89,13 +161,20 @@ async def scan(body: ScanBody, request: Request, user: dict = Depends(get_curren
     code = (body.code or "").strip()
     if len(code) < 6:
         raise HTTPException(400, "Cod prea scurt — scanează codul de bare al AWB-ului.")
+    # 1) colet de retur / schimb / service — doar se notează, NU intră în stoc
+    case = await _find_case(code)
+    if case:
+        return await _scan_case(case, code, case["awb"], request, user)
+    if re.match(r"^(RET|SVC)-", code.upper()):
+        raise HTTPException(404, f"Nu există cererea {code.upper()}. Verifică numărul.")
     order, awb = await _find_order(code)
-    if awb == "retur":
-        raise HTTPException(404, f"AWB {code} e o ridicare de retur chemată din hub, nu un colet refuzat. "
-                                 f"Recepționează-l din cererea de retur (status „Produs recepționat”).")
     if not order:
-        raise HTTPException(404, f"Nu am găsit nicio comandă cu AWB {code}. Verifică dacă e un colet GLS de la noi "
-                                 f"sau introdu AWB-ul manual.")
+        raise HTTPException(404, f"Nu am găsit nicio comandă cu AWB {code}. Dacă e un colet de retur, schimb sau service, "
+                                 f"scrie numărul cererii (ex. RET-2026-00091 sau SVC-2026-00019) și apasă Enter.")
+    # 2) AWB de comandă, dar comanda are cerere de retur/service → tot colet de la client, fără stoc
+    case = await _case_of_order(order)
+    if case:
+        return await _scan_case(case, code, awb, request, user)
     prev = await db.refused_scans.find_one({"order_id": order["order_id"], "undone": {"$ne": True}}, {"_id": 0})
     if prev:
         raise HTTPException(409, f"Comanda {order['name']} a fost deja recepționată ca refuzată pe "
@@ -138,7 +217,9 @@ async def list_scans(days: int = 14, _: dict = Depends(get_current_user)):
     rows = await get_db().refused_scans.find({"created_at": {"$gte": since}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     t = [r for r in rows if not r.get("undone") and datetime.fromisoformat(r["created_at"]).astimezone(TZ).strftime("%Y-%m-%d") == today]
-    return {"items": rows, "today_parcels": len(t), "today_units": sum(r["units"] for r in t)}
+    ref = [r for r in t if not r.get("kind")]
+    return {"items": rows, "today_parcels": len(ref), "today_units": sum(r["units"] for r in ref),
+            "today_cases": len(t) - len(ref)}
 
 
 @router.post("/{sid}/undo")
@@ -151,6 +232,9 @@ async def undo(sid: str, request: Request, user: dict = Depends(require_admin)):
         await move(l["variant_id"], -int(l["qty"]), "ajustare", ref=s["order_name"], actor=user["name"],
                    note=f"Anulare recepție colet refuzat (AWB {s['awb']}) — scanat din greșeală", expand_bundle=False)
     await db.refused_scans.update_one({"id": sid}, {"$set": {"undone": True, "undone_by": user["name"], "undone_at": now_iso()}})
+    if s.get("case_id"):
+        await audit.log(resource_type=s["case_type"], resource_id=s["case_id"], action="parcel_scan_undone", actor=user,
+                        details={"awb": s["awb"]}, ip=audit.client_ip(request))
     await audit.log(resource_type="stock", resource_id=sid, action="stock.refused_undo", actor=user,
                     details={"order": s["order_name"], "awb": s["awb"]}, ip=audit.client_ip(request))
     return {"ok": True}
