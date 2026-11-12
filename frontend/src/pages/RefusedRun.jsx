@@ -21,6 +21,39 @@ const hm = (iso) => new Date(iso).toLocaleTimeString("ro-RO", { hour: "2-digit",
 
 const KIND = { retur: "Retur", schimb: "Schimb", service: "Service" };
 
+const QUICK = ["Produs conform, stare bună", "Produs utilizat — neconform pentru returnarea banilor", "Produs deteriorat", "Lipsesc accesorii / piese", "Ambalaj deteriorat"];
+
+function NoteBox({ scan, onSaved, onDone }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  useEffect(() => { setText(""); setErr(""); }, [scan.id]);
+  const save = async () => {
+    if (!text.trim() || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const d = await api(`/stock/refused/${scan.id}/note`, { method: "POST", body: { text: text.trim() } });
+      setText(""); onSaved(d); onDone();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+  return (
+    <div data-notebox className="mt-4 rounded-xl bg-white p-3 ring-1 ring-violet-200">
+      <div className="text-sm font-semibold text-violet-900">Notă pentru cerere (apare la „Note interne”)</div>
+      {(scan.notes || []).map((n, i) => <div key={i} className="mt-2 rounded-lg bg-violet-50 px-3 py-2 text-sm text-violet-900">✓ {n.text} <span className="text-xs text-violet-500">· {n.by}</span></div>)}
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {QUICK.map((q) => <button key={q} type="button" onClick={() => setText((t) => (t ? `${t}; ${q}` : q))} className="rounded-full bg-violet-100 px-3 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-200">{q}</button>)}
+      </div>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder="ex: produsul este utilizat și miroase a benzină"
+        className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none" />
+      {err && <div className="mt-1 text-xs text-red-600">{err}</div>}
+      <div className="mt-2 flex justify-end gap-2">
+        <button type="button" onClick={() => { setText(""); onDone(); }} className="rounded-lg px-3 py-2 text-sm text-slate-500 hover:bg-slate-100">Fără notă — scanez următorul</button>
+        <button type="button" onClick={save} disabled={!text.trim() || busy} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-40">{busy ? "Se salvează…" : "Salvează nota"}</button>
+      </div>
+    </div>
+  );
+}
+
 export default function RefusedRun() {
   const nav = useNavigate();
   const [code, setCode] = useState("");
@@ -36,7 +69,7 @@ export default function RefusedRun() {
   useEffect(() => {
     const f = () => ref.current?.focus();
     f();
-    const i = setInterval(() => { if (document.activeElement !== ref.current && !busy) f(); }, 800);
+    const i = setInterval(() => { if (document.activeElement !== ref.current && !busy && !document.activeElement?.closest?.("[data-notebox]")) f(); }, 800);
     return () => clearInterval(i);
   }, [busy]);
 
@@ -54,7 +87,7 @@ export default function RefusedRun() {
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-slate-50" onClick={() => ref.current?.focus()}>
+    <div className="fixed inset-0 z-40 flex flex-col bg-slate-50" onClick={(e) => { if (!e.target.closest?.("[data-notebox]")) ref.current?.focus(); }}>
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 pb-3 pt-[max(12px,env(safe-area-inset-top))]">
         <button onClick={() => nav("/stocuri?tab=refuzate")} className="-ml-2 flex h-10 w-10 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
         <div className="text-center">
@@ -84,6 +117,7 @@ export default function RefusedRun() {
               {(last.data.case_items || []).map((l, i) => <div key={i} className="rounded-xl bg-white px-3 py-2 text-sm ring-1 ring-violet-200"><strong>{l.qty} ×</strong> {l.title}</div>)}
             </div>
             <div className="mt-3 text-sm font-medium text-violet-900">Scanarea a fost notată în istoricul cererii. Pune coletul deoparte pentru verificare.</div>
+            <NoteBox scan={last.data} onSaved={(d) => { setLast({ ok: true, data: d }); load(); }} onDone={() => ref.current?.focus()} />
           </div>
         ) : last.ok ? (
           <div key={last.data.id} className="mt-5 rounded-2xl bg-emerald-50 p-5 ring-2 ring-emerald-300">
@@ -111,12 +145,14 @@ export default function RefusedRun() {
         <div className="mt-6 min-h-0 flex-1 overflow-y-auto">
           <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Recepționate azi</div>
           {list.length === 0 ? <div className="text-sm text-slate-400">Niciun colet scanat azi.</div> : list.map((r) => (
-            <div key={r.id} className={cx("mb-1.5 flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-200", r.undone && "opacity-40 line-through")}>
+            <div key={r.id} onClick={() => r.kind && !r.undone && setLast({ ok: true, data: r })} title={r.kind ? "Apasă ca să adaugi o notă" : undefined}
+              className={cx("mb-1.5 flex items-center gap-3 rounded-lg bg-white px-3 py-2 text-sm ring-1 ring-slate-200", r.undone && "opacity-40 line-through", r.kind && !r.undone && "cursor-pointer hover:ring-violet-400")}>
               <span className="w-12 text-xs tabular text-slate-400">{hm(r.created_at)}</span>
               {r.kind && <span className="rounded bg-violet-600 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-white">{KIND[r.kind]}</span>}
               <span className="font-semibold">{r.kind ? r.case_number : r.order_name}</span>
               <span className="font-mono text-xs text-slate-500">{r.awb}</span>
               <span className="min-w-0 flex-1 truncate text-slate-600">{r.kind ? `fără stoc · ${(r.case_items || []).map((l) => `${l.qty} × ${l.title}`).join(", ")}` : r.lines.map((l) => `+${l.qty} ${l.title}`).join(", ")}</span>
+              {r.kind && <span className="text-xs font-medium text-violet-700">{(r.notes || []).length ? `${r.notes.length} notă` : "+ notă"}</span>}
               <span className="text-xs text-slate-400">{r.by}</span>
             </div>
           ))}

@@ -211,6 +211,29 @@ async def scan(body: ScanBody, request: Request, user: dict = Depends(get_curren
     return doc
 
 
+class NoteBody(BaseModel):
+    text: str
+
+
+@router.post("/{sid}/note")
+async def scan_note(sid: str, body: NoteBody, request: Request, user: dict = Depends(get_current_user)):
+    """Notă scrisă de depozit după scanarea unui colet de retur/schimb/service → ajunge la „Note interne” în cerere."""
+    db = get_db()
+    s = await db.refused_scans.find_one({"id": sid}, {"_id": 0})
+    if not s or not s.get("case_id"):
+        raise HTTPException(404, "Scanarea nu ține de o cerere de retur / service")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Nota este goală")
+    note = {"id": new_id(), "ref_type": s["case_type"], "ref_id": s["case_id"], "body": f"[Recepție depozit] {text}",
+            "author_id": user["id"], "author_name": user["name"], "created_at": now_iso()}
+    await db.notes.insert_one(dict(note))
+    await db.refused_scans.update_one({"id": sid}, {"$push": {"notes": {"text": text, "by": user["name"], "at": note["created_at"]}}})
+    await audit.log(resource_type=s["case_type"], resource_id=s["case_id"], action="note_added", actor=user,
+                    details={"text": f"[Recepție depozit] {text}"[:500]}, ip=audit.client_ip(request))
+    return await db.refused_scans.find_one({"id": sid}, {"_id": 0})
+
+
 @router.get("")
 async def list_scans(days: int = 14, _: dict = Depends(get_current_user)):
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
