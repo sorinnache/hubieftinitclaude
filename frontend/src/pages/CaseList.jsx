@@ -196,7 +196,7 @@ function ListView({ kind, items, onOpen }) {
               #{it.order_number} · {it.phone} · {kind === "return" ? RETURN_TYPES[it.return_type] : it.problem_type?.name || it.problem_type_name}
             </div>
             <div className="mt-2 flex items-center justify-between text-xs">
-              {kind === "return" ? <ShipCell s={it.shipment} /> : <span className="text-slate-500">{productsCount(it)} produse</span>}
+              {it.shipment ? <ShipCell s={it.shipment} /> : <span className="text-slate-500">{kind === "return" ? "—" : `${productsCount(it)} produse`}</span>}
               <AgeCell iso={it.created_at} terminal={it.status?.is_terminal} />
             </div>
           </Link>
@@ -214,7 +214,7 @@ function ListView({ kind, items, onOpen }) {
                 {kind === "service" && <th className="px-4 py-3">Problemă</th>}
                 <th className="px-4 py-3">Produse</th>
                 <th className="px-4 py-3">Status</th>
-                {kind === "return" && <th className="px-4 py-3">Colet</th>}
+                <th className="px-4 py-3">Colet</th>
                 {kind === "return" && <th className="px-4 py-3">Tip</th>}
                 <th className="px-4 py-3">Prioritate</th>
                 <th className="px-4 py-3 text-right">Creat</th>
@@ -236,7 +236,7 @@ function ListView({ kind, items, onOpen }) {
                     </div>
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={it.status} /></td>
-                  {kind === "return" && <td className="px-4 py-3"><ShipCell s={it.shipment} /></td>}
+                  <td className="px-4 py-3"><ShipCell s={it.shipment} /></td>
                   {kind === "return" && <td className="whitespace-nowrap px-4 py-3">{RETURN_TYPES[it.return_type] || it.return_type}</td>}
                   <td className={cx("whitespace-nowrap px-4 py-3 font-medium", PRIORITY_COLORS[it.priority])}>{PRIORITIES[it.priority] || "—"}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-right text-xs"><AgeCell iso={it.created_at} terminal={it.status?.is_terminal} /></td>
@@ -292,7 +292,7 @@ function Kanban({ kind, items, statuses, onMove }) {
                     <span className="text-slate-500">#{it.order_number}</span>
                     <span className="text-slate-500">{kind === "return" ? RETURN_TYPES[it.return_type] : it.problem_type?.name}</span>
                   </div>
-                  {kind === "return" && it.shipment && <div className="mt-2"><ShipCell s={it.shipment} /></div>}
+                  {it.shipment && <div className="mt-2"><ShipCell s={it.shipment} /></div>}
                 </Link>
               ))}
             </div>

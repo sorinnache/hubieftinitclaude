@@ -250,13 +250,13 @@ def build_router(kind: str) -> APIRouter:
         if q:
             rx = {"$regex": re.escape(q.strip().lstrip("#")), "$options": "i"}
             query["$or"] = [{k["num"]: rx}, {"order_number": rx}, {"customer_name": rx}, {"email": rx},
-                            {"phone": rx}, {"awb": rx}, {"items.title": rx}]
+                            {"phone": rx}, {"awb": rx}, {"awb_inbound": rx}, {"awb_outbound": rx}, {"items.title": rx}]
         proj = {"_id": 0, "shopify_order": 0}
         items = await db[k["coll"]].find(query, proj).sort("created_at", -1).to_list(5000)
         users = await _users_map()
         ships: dict = {}
-        if kind == "return" and items:
-            async for s in db.shipments.find({"ref_type": "return", "ref_id": {"$in": [i["id"] for i in items]},
+        if items:
+            async for s in db.shipments.find({"ref_type": kind, "ref_id": {"$in": [i["id"] for i in items]},
                                               "status": {"$ne": "cancelled"}},
                                              {"_id": 0, "tracking": 0}).sort("created_at", 1):
                 ships[s["ref_id"]] = s
@@ -266,11 +266,13 @@ def build_router(kind: str) -> APIRouter:
         for it in items:
             it["status"] = statuses.get(it.get("status_id"))
             it["assigned_user"] = users.get(it.get("assigned_to"))
-            if kind == "return":
-                sh = ships.get(it["id"])
-                it["shipment"] = {"awb": sh["awb"], "status": sh.get("status"),
-                                  "status_description": sh.get("status_description")} if sh else None
-            else:
+            sh = ships.get(it["id"])
+            it["shipment"] = {"awb": sh["awb"], "status": sh.get("status"), "kind": sh.get("kind"),
+                              "status_description": sh.get("status_description"),
+                              "last_event_at": sh.get("last_event_at")} if sh else None
+            if kind == "service" and not sh and it.get("awb_inbound"):
+                it["shipment"] = {"awb": it["awb_inbound"], "status": None, "status_description": "AWB notat manual"}
+            if kind != "return":
                 it["problem_type"] = pts.get(it.get("problem_type_id"))
         return items
 
