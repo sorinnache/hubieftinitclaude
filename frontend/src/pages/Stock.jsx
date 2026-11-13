@@ -1168,9 +1168,8 @@ function SupplierNeeds() {
   return (
     <div>
       {/* 1. Rezumat: ce contează la o privire */}
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <NeedKpi label="De comandat" value={view.totals.units} unit="buc" sub={`${view.totals.lines} ${view.totals.lines === 1 ? "produs" : "produse"}`} tone="brand" />
-        <NeedKpi label="Lipsă acum" value={view.totals.shortUnits} unit="buc" sub={`${view.totals.shortLines} produse cu comenzi fără stoc`} tone={view.totals.shortUnits ? "red" : "ok"} />
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <NeedKpi label="De comandat" value={view.totals.units} unit="buc" sub={`${view.totals.lines} ${view.totals.lines === 1 ? "produs" : "produse"} cu comenzi rezervate peste stoc`} tone={view.totals.units ? "red" : "ok"} />
         <NeedKpi label="Furnizori de contactat" value={view.totals.suppliers} sub={`din ${d.suppliers.length} furnizori`} />
         <NeedKpi label="Fără furnizor" value={view.totals.unassigned} sub="produse de comandat nealocate" tone={view.totals.unassigned ? "amber" : "ok"} />
       </div>
@@ -1197,13 +1196,13 @@ function SupplierNeeds() {
           ))}
         </div>
         <div className="mt-2 text-xs text-slate-500">
-          <strong>De comandat</strong> = rezervat + estimare {d.window_days} zile − în depozit. Estimarea repetă ce s-a comandat în ultimele {d.window_days} zile.
+          <strong>De comandat</strong> = rezervat − în depozit (doar când comenzile rezervate depășesc stocul). Ritmul de vânzare e calculat pe ultimele {d.window_days} zile, ca să estimezi singur cât comanzi în plus.
         </div>
       </Card>
 
       {/* 3. Liste pe furnizori */}
       {shown.length === 0 ? (
-        <Card><Empty icon={CheckCircle2} title={mode === "need" ? "Nimic de comandat acum" : "Niciun produs"}>{mode === "need" ? "Stocul acoperă comenzile rezervate și estimarea pe următoarele zile." : "Adaugă furnizori și produsele lor."}</Empty></Card>
+        <Card><Empty icon={CheckCircle2} title={mode === "need" ? "Nimic de comandat acum" : "Niciun produs"}>{mode === "need" ? "Stocul din depozit acoperă toate comenzile rezervate." : "Adaugă furnizori și produsele lor."}</Empty></Card>
       ) : shown.map((g) => (
         <SupplierCard key={g.id} g={g} suppliers={d.suppliers} days={d.window_days} mode={mode} onEdit={() => setEdit(g)} onChanged={load} />
       ))}

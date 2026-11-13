@@ -47,7 +47,7 @@ def _need_row(v: dict, reserved: dict, sold: dict) -> dict:
     forecast = s  # aceeași perioadă înainte: ultimele 3 zile → următoarele 3 zile
     r.update(supplier_id=v.get("supplier_id"), sold_window=s, per_day=round(s / WINDOW_DAYS, 1),
              forecast=forecast, short_now=max(0, r["reserved"] - r["on_hand"]),
-             to_order=max(0, r["reserved"] + forecast - max(r["on_hand"], 0)))
+             to_order=max(0, r["reserved"] - max(r["on_hand"], 0)))  # doar lipsa reală: rezervat − stoc
     return r
 
 
